@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"github.com/xenolf/lego/acme"
 
-	"github.com/18F/cf-cdn-service-broker/config"
+	"github.com/18F/cf-domain-broker-alb/config"
 )
 
 type User struct {

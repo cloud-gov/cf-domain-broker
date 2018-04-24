@@ -9,12 +9,12 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/cloudfront"
+	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/iam"
 
-	"github.com/18F/cf-cdn-service-broker/config"
-	"github.com/18F/cf-cdn-service-broker/models"
-	"github.com/18F/cf-cdn-service-broker/utils"
+	"github.com/18F/cf-domain-broker-alb/config"
+	"github.com/18F/cf-domain-broker-alb/models"
+	"github.com/18F/cf-domain-broker-alb/utils"
 )
 
 func main() {
@@ -40,7 +40,7 @@ func main() {
 	manager := models.NewManager(
 		logger,
 		&utils.Iam{settings, iam.New(session)},
-		&utils.Distribution{settings, cloudfront.New(session)},
+		elbv2.New(session),
 		settings,
 		db,
 	)

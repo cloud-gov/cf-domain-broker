@@ -15,9 +15,10 @@ type Settings struct {
 	DatabaseUrl          string `envconfig:"database_url" required:"true"`
 	Email                string `envconfig:"email" required:"true"`
 	AcmeUrl              string `envconfig:"acme_url" required:"true"`
+	MaxRoutes            int    `envconfig:"max_routes" default:"24"`
 	Bucket               string `envconfig:"bucket" required:"true"`
+	ALBPrefix            string `envconfig:"alb_prefix" required:"true"`
 	IamPathPrefix        string `envconfig:"iam_path_prefix" default:"letsencrypt"`
-	CloudFrontPrefix     string `envconfig:"cloudfront_prefix" default:""`
 	AwsAccessKeyId       string `envconfig:"aws_access_key_id" required:"true"`
 	AwsSecretAccessKey   string `envconfig:"aws_secret_access_key" required:"true"`
 	AwsDefaultRegion     string `envconfig:"aws_default_region" required:"true"`
@@ -25,7 +26,6 @@ type Settings struct {
 	APIAddress           string `envconfig:"api_address" required:"true"`
 	ClientID             string `envconfig:"client_id" required:"true"`
 	ClientSecret         string `envconfig:"client_secret" required:"true"`
-	DefaultOrigin        string `envconfig:"default_origin" required:"true"`
 	Schedule             string `envconfig:"schedule" default:"0 0 * * * *"`
 }
 

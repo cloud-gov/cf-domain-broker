@@ -8,6 +8,21 @@
   revision = "25ee72f227fe10c5671d8a99d05a2faf388ccfeb"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/18F/cf-cdn-service-broker"
+  packages = [
+    "broker",
+    "cf",
+    "cf/mocks",
+    "config",
+    "healthchecks",
+    "models",
+    "models/mocks",
+    "utils"
+  ]
+  revision = "f1f308020e14dce3077bad85dc2a4591e9b651d9"
+
+[[projects]]
   name = "github.com/aws/aws-sdk-go"
   packages = [
     "aws",
@@ -36,18 +51,20 @@
     "private/protocol/restxml",
     "private/protocol/xml/xmlutil",
     "service/cloudfront",
+    "service/elbv2",
+    "service/elbv2/elbv2iface",
     "service/iam",
     "service/s3",
     "service/sts"
   ]
-  revision = "c8c4e0c0514d87f930c1342fef390db5329928b7"
-  version = "v1.13.20"
+  revision = "3e7014382cdc91695381614d0110a3cff997ba72"
+  version = "v1.13.34"
 
 [[projects]]
   branch = "master"
   name = "github.com/cloudfoundry-community/go-cfclient"
   packages = ["."]
-  revision = "b5f0f59f96d69067301406394c0f25e7289c834a"
+  revision = "cfc053bbd9609d0bf45e7009b283672caa757899"
 
 [[projects]]
   branch = "master"
@@ -64,8 +81,8 @@
 [[projects]]
   name = "github.com/go-ini/ini"
   packages = ["."]
-  revision = "6333e38ac20b8949a8dd68baa3650f4dee8f39f0"
-  version = "v1.33.0"
+  revision = "6529cf7c58879c08d927016dde4477f18a0634cb"
+  version = "v1.36.0"
 
 [[projects]]
   name = "github.com/golang/protobuf"
@@ -119,22 +136,22 @@
     "hstore",
     "oid"
   ]
-  revision = "a96442e255fce502751c604916b0e14e81be6bf9"
+  revision = "d34b9ff171c21ad295489235aec8b6626023cd04"
 
 [[projects]]
   name = "github.com/miekg/dns"
   packages = ["."]
-  revision = "5364553f1ee9cddc7ac8b62dce148309c386695b"
-  version = "v1.0.4"
+  revision = "83c435cc65d2862736428b9b4d07d0ab10ad3e4d"
+  version = "v1.0.5"
 
 [[projects]]
-  branch = "master"
   name = "github.com/pivotal-cf/brokerapi"
   packages = [
     ".",
     "auth"
   ]
-  revision = "a31b912e79c8cb4875840cbfbe8dc4f96f0507ab"
+  revision = "b763fb58cdae010fb90a94387db218c95967f0d5"
+  version = "v2.0.0"
 
 [[projects]]
   name = "github.com/pkg/errors"
@@ -186,7 +203,7 @@
     "ed25519/internal/edwards25519",
     "ocsp"
   ]
-  revision = "88942b9c40a4c9d203b82b3731787b672d6e809b"
+  revision = "2b6c08872f4b66da917bb4ce98df4f0307330f78"
 
 [[projects]]
   branch = "master"
@@ -202,7 +219,7 @@
     "ipv6",
     "publicsuffix"
   ]
-  revision = "6078986fec03a1dcc236c34816c71b0e05018fda"
+  revision = "5f9ae10d9af5b1c89ae6904293b14b064d4ada23"
 
 [[projects]]
   branch = "master"
@@ -212,7 +229,7 @@
     "clientcredentials",
     "internal"
   ]
-  revision = "fdc9e635145ae97e6c2cb777c48305600cf515cb"
+  revision = "6881fee410a5daf86371371f9ad451b95e168b71"
 
 [[projects]]
   name = "golang.org/x/text"
@@ -260,14 +277,14 @@
   version = "v1.1.1"
 
 [[projects]]
-  branch = "v2"
   name = "gopkg.in/yaml.v2"
   packages = ["."]
-  revision = "4fc5987536ef307a24ca299aee7ae301cde3d221"
+  revision = "5420a8b6744d3b0345ab293f6fcba19c978f1183"
+  version = "v2.2.1"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "af333d6e5ead6627c547c2e89516261a885625287e648095be12009378e67ce6"
+  inputs-digest = "d5dcbfcc79fbe0cc4fb62496cc67426e161dc2ea75cbdf458d4c43da68306831"
   solver-name = "gps-cdcl"
   solver-version = 1

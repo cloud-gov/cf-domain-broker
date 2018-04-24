@@ -11,18 +11,18 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/cloudfront"
+	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/iam"
 
-	"github.com/18F/cf-cdn-service-broker/broker"
-	"github.com/18F/cf-cdn-service-broker/config"
-	"github.com/18F/cf-cdn-service-broker/healthchecks"
-	"github.com/18F/cf-cdn-service-broker/models"
-	"github.com/18F/cf-cdn-service-broker/utils"
+	"github.com/18F/cf-domain-broker-alb/broker"
+	"github.com/18F/cf-domain-broker-alb/config"
+	"github.com/18F/cf-domain-broker-alb/healthchecks"
+	"github.com/18F/cf-domain-broker-alb/models"
+	"github.com/18F/cf-domain-broker-alb/utils"
 )
 
 func main() {
-	logger := lager.NewLogger("cdn-service-broker")
+	logger := lager.NewLogger("cf-domain-broker-alb")
 	logger.RegisterSink(lager.NewWriterSink(os.Stderr, lager.INFO))
 
 	settings, err := config.NewSettings()
@@ -46,14 +46,14 @@ func main() {
 
 	session := session.New(aws.NewConfig().WithRegion(settings.AwsDefaultRegion))
 
-	if err := db.AutoMigrate(&models.Route{}, &models.Certificate{}, &models.UserData{}).Error; err != nil {
+	if err := db.AutoMigrate(&models.Route{}, &models.ALBProxy{}, &models.Certificate{}, &models.UserData{}).Error; err != nil {
 		logger.Fatal("migrate", err)
 	}
 
 	manager := models.NewManager(
 		logger,
 		&utils.Iam{settings, iam.New(session)},
-		&utils.Distribution{settings, cloudfront.New(session)},
+		elbv2.New(session),
 		settings,
 		db,
 	)
@@ -66,6 +66,10 @@ func main() {
 	credentials := brokerapi.BrokerCredentials{
 		Username: settings.BrokerUsername,
 		Password: settings.BrokerPassword,
+	}
+
+	if err := manager.Populate(); err != nil {
+		logger.Fatal("populate", err)
 	}
 
 	brokerAPI := brokerapi.New(broker, logger, credentials)

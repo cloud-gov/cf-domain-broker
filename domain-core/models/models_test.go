@@ -15,9 +15,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/cloudfront"
 	"github.com/aws/aws-sdk-go/service/iam"
 
-	"github.com/18F/cf-cdn-service-broker/config"
-	"github.com/18F/cf-cdn-service-broker/models"
-	"github.com/18F/cf-cdn-service-broker/utils"
+	"github.com/18F/cf-domain-broker-alb/config"
+	"github.com/18F/cf-domain-broker-alb/models"
+	"github.com/18F/cf-domain-broker-alb/utils"
 
 	"github.com/stretchr/testify/mock"
 )

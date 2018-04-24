@@ -11,19 +11,13 @@ import (
 	"code.cloudfoundry.org/lager"
 	"github.com/pivotal-cf/brokerapi"
 
-	"github.com/18F/cf-cdn-service-broker/cf"
-	"github.com/18F/cf-cdn-service-broker/config"
-	"github.com/18F/cf-cdn-service-broker/models"
-	"github.com/18F/cf-cdn-service-broker/utils"
+	"github.com/18F/cf-domain-broker-alb/cf"
+	"github.com/18F/cf-domain-broker-alb/config"
+	"github.com/18F/cf-domain-broker-alb/models"
 )
 
 type Options struct {
-	Domain         string   `json:"domain"`
-	Origin         string   `json:"origin"`
-	Path           string   `json:"path"`
-	InsecureOrigin bool     `json:"insecure_origin"`
-	Cookies        bool     `json:"cookies"`
-	Headers        []string `json:"headers"`
+	Domains []string `json:"domain"`
 }
 
 type CdnServiceBroker struct {
@@ -86,19 +80,7 @@ func (b *CdnServiceBroker) Provision(
 		return spec, brokerapi.ErrInstanceAlreadyExists
 	}
 
-	headers, err := b.getHeaders(options)
-	if err != nil {
-		return spec, err
-	}
-
-	tags := map[string]string{
-		"Organization": details.OrganizationGUID,
-		"Space":        details.SpaceGUID,
-		"Service":      details.ServiceID,
-		"Plan":         details.PlanID,
-	}
-
-	_, err = b.manager.Create(instanceID, options.Domain, options.Origin, options.Path, options.InsecureOrigin, headers, options.Cookies, tags)
+	_, err = b.manager.Create(instanceID, options.Domains)
 	if err != nil {
 		return spec, err
 	}
@@ -121,43 +103,27 @@ func (b *CdnServiceBroker) LastOperation(
 	err = b.manager.Poll(route)
 	if err != nil {
 		b.logger.Error("Error during update", err, lager.Data{
-			"domain": route.DomainExternal,
-			"state":  route.State,
+			"domains": route.Domains,
+			"state":   route.State,
 		})
 	}
 
 	switch route.State {
 	case models.Provisioning:
-		instructions, err := b.manager.GetDNSInstructions(route)
+		description, err := b.manager.GetDNSInstructions(route)
 		if err != nil {
 			return brokerapi.LastOperation{}, err
 		}
-		if len(instructions) != len(route.GetDomains()) {
-			return brokerapi.LastOperation{}, fmt.Errorf("Expected to find %d tokens; found %d", len(route.GetDomains()), len(instructions))
-		}
-		description := fmt.Sprintf(
-			"Provisioning in progress [%s => %s]; CNAME or ALIAS domain %s to %s or create TXT record(s): \n%s",
-			route.DomainExternal, route.Origin, route.DomainExternal, route.DomainInternal,
-			strings.Join(instructions, "\n"),
-		)
 		return brokerapi.LastOperation{
 			State:       brokerapi.InProgress,
 			Description: description,
-		}, nil
-	case models.Deprovisioning:
-		return brokerapi.LastOperation{
-			State: brokerapi.InProgress,
-			Description: fmt.Sprintf(
-				"Deprovisioning in progress [%s => %s]; CDN domain %s",
-				route.DomainExternal, route.Origin, route.DomainInternal,
-			),
 		}, nil
 	default:
 		return brokerapi.LastOperation{
 			State: brokerapi.Succeeded,
 			Description: fmt.Sprintf(
-				"Service instance provisioned [%s => %s]; CDN domain %s",
-				route.DomainExternal, route.Origin, route.DomainInternal,
+				"Service instance provisioned; CDN domain %s",
+				strings.Join(route.Domains, ", "),
 			),
 		}, nil
 	}
@@ -169,21 +135,12 @@ func (b *CdnServiceBroker) Deprovision(
 	details brokerapi.DeprovisionDetails,
 	asyncAllowed bool,
 ) (brokerapi.DeprovisionServiceSpec, error) {
-	if !asyncAllowed {
-		return brokerapi.DeprovisionServiceSpec{}, brokerapi.ErrAsyncRequired
-	}
-
-	route, err := b.manager.Get(instanceID)
-	if err != nil {
-		return brokerapi.DeprovisionServiceSpec{}, err
-	}
-
-	err = b.manager.Disable(route)
+	err := b.manager.Destroy(instanceID)
 	if err != nil {
 		return brokerapi.DeprovisionServiceSpec{}, nil
 	}
 
-	return brokerapi.DeprovisionServiceSpec{IsAsync: true}, nil
+	return brokerapi.DeprovisionServiceSpec{IsAsync: false}, nil
 }
 
 func (b *CdnServiceBroker) Bind(
@@ -217,12 +174,7 @@ func (b *CdnServiceBroker) Update(
 		return brokerapi.UpdateServiceSpec{}, err
 	}
 
-	headers, err := b.getHeaders(options)
-	if err != nil {
-		return brokerapi.UpdateServiceSpec{}, err
-	}
-
-	err = b.manager.Update(instanceID, options.Domain, options.Origin, options.Path, options.InsecureOrigin, headers, options.Cookies)
+	err = b.manager.Update(instanceID, options.Domains)
 	if err != nil {
 		return brokerapi.UpdateServiceSpec{}, err
 	}
@@ -236,11 +188,7 @@ func (b *CdnServiceBroker) createBrokerOptions(details []byte) (options Options,
 		err = errors.New("must be invoked with configuration parameters")
 		return
 	}
-	options = Options{
-		Origin:  b.settings.DefaultOrigin,
-		Cookies: true,
-		Headers: []string{},
-	}
+	options = Options{}
 	err = json.Unmarshal(details, &options)
 	if err != nil {
 		return
@@ -255,15 +203,9 @@ func (b *CdnServiceBroker) parseProvisionDetails(details brokerapi.ProvisionDeta
 	if err != nil {
 		return
 	}
-	if options.Domain == "" {
-		err = errors.New("must pass non-empty `domain`")
+	if len(options.Domains) == 0 {
+		err = errors.New("must pass non-empty `domains`")
 		return
-	}
-	if options.Origin == b.settings.DefaultOrigin {
-		err = b.checkDomain(options.Domain, details.OrganizationGUID)
-		if err != nil {
-			return
-		}
 	}
 	return
 }
@@ -275,24 +217,19 @@ func (b *CdnServiceBroker) parseUpdateDetails(details brokerapi.UpdateDetails) (
 	if err != nil {
 		return
 	}
-	if options.Domain == "" && options.Origin == "" {
-		err = errors.New("must pass non-empty `domain` or `origin`")
+	if len(options.Domains) == 0 {
+		err = errors.New("must pass non-empty `domains`")
 		return
 	}
-	if options.Domain != "" && options.Origin == b.settings.DefaultOrigin {
-		err = b.checkDomain(options.Domain, details.PreviousValues.OrgID)
-		if err != nil {
-			return
-		}
+	err = b.checkDomain(options.Domains, details.PreviousValues.OrgID)
+	if err != nil {
+		return
 	}
 	return
 }
 
-func (b *CdnServiceBroker) checkDomain(domain, orgGUID string) error {
-	// domain can be a comma separated list so we need to check each one individually
-	domains := strings.Split(domain, ",")
+func (b *CdnServiceBroker) checkDomain(domains []string, orgGUID string) error {
 	var errorlist []string
-
 	orgName := "<organization>"
 
 	for _, domain := range domains {
@@ -319,33 +256,4 @@ func (b *CdnServiceBroker) checkDomain(domain, orgGUID string) error {
 	}
 
 	return nil
-}
-
-func (b *CdnServiceBroker) getHeaders(options Options) (headers utils.Headers, err error) {
-	headers = utils.Headers{}
-	for _, header := range options.Headers {
-		if headers.Contains(header) {
-			err = fmt.Errorf("must not pass duplicated header '%s'", header)
-			return
-		}
-		headers.Add(header)
-	}
-
-	// Forbid accompanying a wildcard with specific headers.
-	if headers.Contains("*") && len(headers) > 1 {
-		err = errors.New("must not pass whitelisted headers alongside wildcard")
-		return
-	}
-
-	// Ensure the Host header is forwarded if using a CloudFoundry origin.
-	if options.Origin == b.settings.DefaultOrigin && !headers.Contains("*") {
-		headers.Add("Host")
-	}
-
-	if len(headers) > MAX_HEADER_COUNT {
-		err = fmt.Errorf("must not set more than %d headers; got %d", MAX_HEADER_COUNT, len(headers))
-		return
-	}
-
-	return
 }

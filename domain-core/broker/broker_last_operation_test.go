@@ -11,11 +11,11 @@ import (
 	"code.cloudfoundry.org/lager"
 	"github.com/pivotal-cf/brokerapi"
 
-	"github.com/18F/cf-cdn-service-broker/broker"
-	cfmock "github.com/18F/cf-cdn-service-broker/cf/mocks"
-	"github.com/18F/cf-cdn-service-broker/config"
-	"github.com/18F/cf-cdn-service-broker/models"
-	"github.com/18F/cf-cdn-service-broker/models/mocks"
+	"github.com/18F/cf-domain-broker-alb/broker"
+	cfmock "github.com/18F/cf-domain-broker-alb/cf/mocks"
+	"github.com/18F/cf-domain-broker-alb/config"
+	"github.com/18F/cf-domain-broker-alb/models"
+	"github.com/18F/cf-domain-broker-alb/models/mocks"
 )
 
 func TestLastOperation(t *testing.T) {

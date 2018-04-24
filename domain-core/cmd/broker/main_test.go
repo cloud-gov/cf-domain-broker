@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	"code.cloudfoundry.org/lager"
-	"github.com/18F/cf-cdn-service-broker/broker"
-	"github.com/18F/cf-cdn-service-broker/config"
 	"github.com/pivotal-cf/brokerapi"
+
+	"github.com/18F/cf-domain-broker-alb/broker"
+	"github.com/18F/cf-domain-broker-alb/config"
 )
 
 func TestHTTPHandler(t *testing.T) {
