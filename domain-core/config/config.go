@@ -17,8 +17,8 @@ type Settings struct {
 	AcmeUrl              string `envconfig:"acme_url" required:"true"`
 	MaxRoutes            int    `envconfig:"max_routes" default:"24"`
 	Bucket               string `envconfig:"bucket" required:"true"`
-	ALBPrefix            string `envconfig:"alb_prefix" required:"true"`
-	IamPathPrefix        string `envconfig:"iam_path_prefix" default:"letsencrypt"`
+	ALBPrefix            string `envconfig:"alb_prefix" default:"domains-broker"`
+	IamPathPrefix        string `envconfig:"iam_path_prefix" default:"/domains-broker/"`
 	AwsAccessKeyId       string `envconfig:"aws_access_key_id" required:"true"`
 	AwsSecretAccessKey   string `envconfig:"aws_secret_access_key" required:"true"`
 	AwsDefaultRegion     string `envconfig:"aws_default_region" required:"true"`

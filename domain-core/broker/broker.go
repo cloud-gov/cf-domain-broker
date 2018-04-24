@@ -17,7 +17,7 @@ import (
 )
 
 type Options struct {
-	Domains []string `json:"domain"`
+	Domains []string `json:"domains"`
 }
 
 type CdnServiceBroker struct {
@@ -100,8 +100,7 @@ func (b *CdnServiceBroker) LastOperation(
 		}, nil
 	}
 
-	err = b.manager.Poll(route)
-	if err != nil {
+	if err := b.manager.Poll(route); err != nil {
 		b.logger.Error("Error during update", err, lager.Data{
 			"domains": route.Domains,
 			"state":   route.State,

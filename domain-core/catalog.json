@@ -1,6 +1,6 @@
 {
   "id": "8478b533-2b59-4007-8494-2feec5970f94",
-  "name": "cdn-route",
+  "name": "custom-domain",
   "description": "Custom domains, CDN caching, and TLS certificates with automatic renewal",
   "bindable": true,
   "metadata": {
@@ -11,7 +11,7 @@
   "plans": [
     {
       "id": "fc055c72-1075-44c9-9aee-bddd52e1b053",
-      "name": "cdn-route",
+      "name": "custom-domain",
       "description": "Custom domains, CDN caching, and TLS certificates with automatic renewal",
       "free": true,
       "metadata": {

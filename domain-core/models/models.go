@@ -25,6 +25,7 @@ import (
 	"github.com/xenolf/lego/acme"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
@@ -61,6 +62,7 @@ func (s *State) Scan(value interface{}) error {
 }
 
 type UserData struct {
+	gorm.Model
 	Email string `gorm:"not null"`
 	Reg   []byte
 	Key   []byte
@@ -221,6 +223,7 @@ func NewManager(
 }
 
 func (m *RouteManager) Create(instanceId string, domains []string) (*Route, error) {
+	m.logger.Info("create-user", lager.Data{"guid": instanceId, "domains": domains})
 	user, err := CreateUser(m.settings.Email)
 	if err != nil {
 		return nil, err
@@ -236,12 +239,14 @@ func (m *RouteManager) Create(instanceId string, domains []string) (*Route, erro
 		return nil, err
 	}
 
-	route, err := m.assignALB(instanceId, domains)
+	m.logger.Info("assign-alb", lager.Data{"guid": instanceId, "domains": domains})
+	route, err := m.assignALB(instanceId)
 	if err != nil {
 		return nil, err
 	}
+	m.logger.Info("assigned-alb", lager.Data{"route": route})
 
-	route.Domains = domains
+	route.Domains = pq.StringArray(domains)
 	route.UserData = userData
 
 	challenges, errs := clients[acme.HTTP01].GetChallenges(route.Domains)
@@ -262,7 +267,7 @@ func (m *RouteManager) Create(instanceId string, domains []string) (*Route, erro
 	return route, nil
 }
 
-func (m *RouteManager) assignALB(guid string, domains []string) (*Route, error) {
+func (m *RouteManager) assignALB(guid string) (*Route, error) {
 	var route Route
 	if err := m.db.Raw(`
 		WITH counts AS (
@@ -274,10 +279,9 @@ func (m *RouteManager) assignALB(guid string, domains []string) (*Route, error) 
 				ORDER BY count
 				LIMIT 1
 		)
-		INSERT INTO routes SELECT $2 AS guid, $3 AS domains, alb_arn as lb_proxy_arn FROM counts
-		RETURNING guid, domains, alb_proxy_arn
-
-	`, m.settings.MaxRoutes, guid, pq.StringArray(domains)).Scan(&route).Error; err != nil {
+		INSERT INTO routes (guid, state, alb_proxy_arn) SELECT $2 AS guid, $3 AS state, alb_arn AS alb_proxy_arn FROM counts
+		RETURNING guid, state, alb_proxy_arn;
+	`, m.settings.MaxRoutes, guid, Provisioning).Scan(&route).Error; err != nil {
 		return nil, err
 	}
 	return &route, nil
@@ -450,7 +454,7 @@ func (m *RouteManager) DeleteOrphanedCerts() {
 	// })
 
 	// // iterate over all certificates
-	// m.iam.ListCertificates(func(cert iam.ServerCertificateMetadata) bool {
+	// m.iam.ListCertificates(m.settings.IamPathPrefix, func(cert iam.ServerCertificateMetadata) bool {
 
 	// 	// delete any certs not attached to a distribution that are older than 24 hours
 	// 	_, active := activeCerts[*cert.ServerCertificateId]
@@ -523,16 +527,19 @@ func (m *RouteManager) getClients(user *utils.User, settings config.Settings) (m
 }
 
 func (m *RouteManager) updateProvisioning(r *Route) error {
+	m.logger.Info("load-user", lager.Data{"guid": r.GUID, "domains": r.Domains})
 	user, err := r.loadUser(m.db)
 	if err != nil {
 		return err
 	}
+	m.logger.Info("loaded-user", lager.Data{"guid": r.GUID, "domains": r.Domains, "user": user})
 
 	clients, err := m.getClients(&user, m.settings)
 	if err != nil {
 		return err
 	}
 
+	m.logger.Info("solve-challenges", lager.Data{"guid": r.GUID, "domains": r.Domains})
 	var challenges []acme.AuthorizationResource
 	if err := json.Unmarshal(r.ChallengeJSON, &challenges); err != nil {
 		return err
@@ -541,6 +548,7 @@ func (m *RouteManager) updateProvisioning(r *Route) error {
 		return fmt.Errorf("Error(s) solving challenges: %v", errs)
 	}
 
+	m.logger.Info("request-certificate", lager.Data{"guid": r.GUID, "domains": r.Domains})
 	cert, err := clients[acme.HTTP01].RequestCertificate(challenges, true, nil, false)
 	if err != nil {
 		return err
@@ -612,30 +620,38 @@ func (m *RouteManager) deployCertificate(route *Route, cert acme.CertificateReso
 	}
 
 	name := fmt.Sprintf("cf-domains-%s-%s", route.GUID, expires.Format("2006-01-02_15-04-05"))
-
-	m.logger.Info("Uploading certificate to IAM", lager.Data{"name": name})
-
-	certARN, err := m.iam.UploadCertificate(name, cert)
+	m.logger.Info("upload-cert", lager.Data{"guid": route.GUID, "domains": route.Domains, "name": name})
+	certARN, err := m.iam.UploadCertificate(name, m.settings.IamPathPrefix, cert)
 	if err != nil {
 		return err
 	}
 
 	var albProxy ALBProxy
-	if err := m.db.Model(route).Related(&albProxy).Error; err != nil {
+	if err := m.db.First(&albProxy, ALBProxy{ALBARN: route.ALBProxyARN}).Error; err != nil {
 		return err
 	}
 
-	if _, err := m.elbSvc.AddListenerCertificates(&elbv2.AddListenerCertificatesInput{
-		ListenerArn: aws.String(albProxy.ListenerARN),
-		Certificates: []*elbv2.Certificate{
-			&elbv2.Certificate{
-				CertificateArn: aws.String(certARN),
-				IsDefault:      aws.Bool(false),
+	for {
+		m.logger.Info("add-listener-cert", lager.Data{
+			"listenerARN": albProxy.ListenerARN,
+			"certARN":     certARN,
+		})
+		if _, err := m.elbSvc.AddListenerCertificates(&elbv2.AddListenerCertificatesInput{
+			ListenerArn: aws.String(albProxy.ListenerARN),
+			Certificates: []*elbv2.Certificate{
+				{CertificateArn: aws.String(certARN)},
 			},
-		},
-	}); err != nil {
-		return err
+		}); err != nil {
+			if aerr, ok := err.(awserr.Error); ok {
+				if aerr.Code() == elbv2.ErrCodeCertificateNotFoundException {
+					continue
+				}
+			}
+			return err
+		}
+		break
 	}
+
 	return nil
 }
 
@@ -644,7 +660,7 @@ func (m *RouteManager) GetDNSInstructions(route *Route) (string, error) {
 	var challenges []acme.AuthorizationResource
 
 	var albProxy ALBProxy
-	if err := m.db.Model(route).Related(&albProxy).Error; err != nil {
+	if err := m.db.First(&albProxy, ALBProxy{ALBARN: route.ALBProxyARN}).Error; err != nil {
 		return "", err
 	}
 
@@ -670,7 +686,7 @@ func (m *RouteManager) GetDNSInstructions(route *Route) (string, error) {
 	}
 
 	return fmt.Sprintf(
-		"Provisioning in progress; CNAME or ALIAS domain %s to %s or create TXT record(s): \n%s",
+		"Provisioning in progress; CNAME or ALIAS domain(s) %s to %s or create TXT record(s): \n%s",
 		strings.Join(route.Domains, ", "), albProxy.ALBDNSName,
 		strings.Join(instructions, "\n"),
 	), nil
@@ -712,7 +728,7 @@ func (m *RouteManager) Populate() error {
 	}
 	// TODO: Bulk insert
 	for _, proxy := range proxies {
-		if err := m.db.Set("gorm:insert_option", "ON CONFLICT DO NOTHING").Create(&proxy).Error; err != nil {
+		if err := m.db.Set("gorm:insert_option", "ON CONFLICT (alb_arn) DO UPDATE SET alb_dns_name = EXCLUDED.alb_dns_name, listener_arn = EXCLUDED.listener_arn").Create(&proxy).Error; err != nil {
 			return err
 		}
 	}

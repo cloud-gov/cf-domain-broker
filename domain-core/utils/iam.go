@@ -1,45 +1,40 @@
 package utils
 
 import (
-	"fmt"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/iam"
 
 	"github.com/xenolf/lego/acme"
-
-	"github.com/18F/cf-domain-broker-alb/config"
 )
 
 type IamIface interface {
-	UploadCertificate(name string, cert acme.CertificateResource) (string, error)
+	UploadCertificate(name, path string, cert acme.CertificateResource) (string, error)
 	DeleteCertificate(name string) error
-	ListCertificates(callback func(iam.ServerCertificateMetadata) bool) error
+	ListCertificates(path string, callback func(iam.ServerCertificateMetadata) bool) error
 }
 
 type Iam struct {
-	Settings config.Settings
-	Service  *iam.IAM
+	Service *iam.IAM
 }
 
-func (i *Iam) UploadCertificate(name string, cert acme.CertificateResource) (string, error) {
+func (i *Iam) UploadCertificate(name, path string, cert acme.CertificateResource) (string, error) {
 	resp, err := i.Service.UploadServerCertificate(&iam.UploadServerCertificateInput{
 		CertificateBody:       aws.String(string(cert.Certificate)),
 		PrivateKey:            aws.String(string(cert.PrivateKey)),
 		ServerCertificateName: aws.String(name),
-		Path: aws.String(fmt.Sprintf("/cloudfront/%s/", i.Settings.IamPathPrefix)),
+		Path: aws.String(path),
 	})
 	if err != nil {
 		return "", err
 	}
 
-	return *resp.ServerCertificateMetadata.ServerCertificateId, nil
+	return *resp.ServerCertificateMetadata.Arn, nil
 }
 
-func (i *Iam) ListCertificates(callback func(iam.ServerCertificateMetadata) bool) error {
+func (i *Iam) ListCertificates(path string, callback func(iam.ServerCertificateMetadata) bool) error {
 	return i.Service.ListServerCertificatesPages(
 		&iam.ListServerCertificatesInput{
-			PathPrefix: aws.String(fmt.Sprintf("/cloudfront/%s/", i.Settings.IamPathPrefix)),
+			PathPrefix: aws.String(path),
 		},
 		func(page *iam.ListServerCertificatesOutput, lastPage bool) bool {
 			for _, v := range page.ServerCertificateMetadataList {

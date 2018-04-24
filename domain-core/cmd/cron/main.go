@@ -39,7 +39,7 @@ func main() {
 
 	manager := models.NewManager(
 		logger,
-		&utils.Iam{settings, iam.New(session)},
+		&utils.Iam{iam.New(session)},
 		elbv2.New(session),
 		settings,
 		db,
