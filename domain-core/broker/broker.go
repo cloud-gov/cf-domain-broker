@@ -20,7 +20,7 @@ type Options struct {
 	Domains []string `json:"domains"`
 }
 
-type CdnServiceBroker struct {
+type DomainBroker struct {
 	manager  models.RouteManagerIface
 	cfclient cf.Client
 	settings config.Settings
@@ -32,8 +32,8 @@ func New(
 	cfclient cf.Client,
 	settings config.Settings,
 	logger lager.Logger,
-) *CdnServiceBroker {
-	return &CdnServiceBroker{
+) *DomainBroker {
+	return &DomainBroker{
 		manager:  manager,
 		cfclient: cfclient,
 		settings: settings,
@@ -45,7 +45,7 @@ var (
 	MAX_HEADER_COUNT = 10
 )
 
-func (*CdnServiceBroker) Services(context context.Context) ([]brokerapi.Service, error) {
+func (*DomainBroker) Services(context context.Context) ([]brokerapi.Service, error) {
 	var service brokerapi.Service
 	buf, err := ioutil.ReadFile("./catalog.json")
 	if err != nil {
@@ -58,7 +58,7 @@ func (*CdnServiceBroker) Services(context context.Context) ([]brokerapi.Service,
 	return []brokerapi.Service{service}, nil
 }
 
-func (b *CdnServiceBroker) Provision(
+func (b *DomainBroker) Provision(
 	context context.Context,
 	instanceID string,
 	details brokerapi.ProvisionDetails,
@@ -88,7 +88,7 @@ func (b *CdnServiceBroker) Provision(
 	return brokerapi.ProvisionedServiceSpec{IsAsync: true}, nil
 }
 
-func (b *CdnServiceBroker) LastOperation(
+func (b *DomainBroker) LastOperation(
 	context context.Context,
 	instanceID, operationData string,
 ) (brokerapi.LastOperation, error) {
@@ -121,14 +121,14 @@ func (b *CdnServiceBroker) LastOperation(
 		return brokerapi.LastOperation{
 			State: brokerapi.Succeeded,
 			Description: fmt.Sprintf(
-				"Service instance provisioned; CDN domain %s",
+				"Service instance provisioned; domain(s) %s",
 				strings.Join(route.Domains, ", "),
 			),
 		}, nil
 	}
 }
 
-func (b *CdnServiceBroker) Deprovision(
+func (b *DomainBroker) Deprovision(
 	context context.Context,
 	instanceID string,
 	details brokerapi.DeprovisionDetails,
@@ -142,7 +142,7 @@ func (b *CdnServiceBroker) Deprovision(
 	return brokerapi.DeprovisionServiceSpec{IsAsync: false}, nil
 }
 
-func (b *CdnServiceBroker) Bind(
+func (b *DomainBroker) Bind(
 	context context.Context,
 	instanceID, bindingID string,
 	details brokerapi.BindDetails,
@@ -150,7 +150,7 @@ func (b *CdnServiceBroker) Bind(
 	return brokerapi.Binding{}, errors.New("service does not support bind")
 }
 
-func (b *CdnServiceBroker) Unbind(
+func (b *DomainBroker) Unbind(
 	context context.Context,
 	instanceID, bindingID string,
 	details brokerapi.UnbindDetails,
@@ -158,7 +158,7 @@ func (b *CdnServiceBroker) Unbind(
 	return errors.New("service does not support bind")
 }
 
-func (b *CdnServiceBroker) Update(
+func (b *DomainBroker) Update(
 	context context.Context,
 	instanceID string,
 	details brokerapi.UpdateDetails,
@@ -182,7 +182,7 @@ func (b *CdnServiceBroker) Update(
 }
 
 // createBrokerOptions will attempt to take raw json and convert it into the "Options" struct.
-func (b *CdnServiceBroker) createBrokerOptions(details []byte) (options Options, err error) {
+func (b *DomainBroker) createBrokerOptions(details []byte) (options Options, err error) {
 	if len(details) == 0 {
 		err = errors.New("must be invoked with configuration parameters")
 		return
@@ -197,7 +197,7 @@ func (b *CdnServiceBroker) createBrokerOptions(details []byte) (options Options,
 
 // parseProvisionDetails will attempt to parse the update details and then verify that BOTH least "domain" and "origin"
 // are provided.
-func (b *CdnServiceBroker) parseProvisionDetails(details brokerapi.ProvisionDetails) (options Options, err error) {
+func (b *DomainBroker) parseProvisionDetails(details brokerapi.ProvisionDetails) (options Options, err error) {
 	options, err = b.createBrokerOptions(details.RawParameters)
 	if err != nil {
 		return
@@ -211,7 +211,7 @@ func (b *CdnServiceBroker) parseProvisionDetails(details brokerapi.ProvisionDeta
 
 // parseUpdateDetails will attempt to parse the update details and then verify that at least "domain" or "origin"
 // are provided.
-func (b *CdnServiceBroker) parseUpdateDetails(details brokerapi.UpdateDetails) (options Options, err error) {
+func (b *DomainBroker) parseUpdateDetails(details brokerapi.UpdateDetails) (options Options, err error) {
 	options, err = b.createBrokerOptions(details.RawParameters)
 	if err != nil {
 		return
@@ -227,7 +227,7 @@ func (b *CdnServiceBroker) parseUpdateDetails(details brokerapi.UpdateDetails) (
 	return
 }
 
-func (b *CdnServiceBroker) checkDomain(domains []string, orgGUID string) error {
+func (b *DomainBroker) checkDomain(domains []string, orgGUID string) error {
 	var errorlist []string
 	orgName := "<organization>"
 

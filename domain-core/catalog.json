@@ -1,21 +1,21 @@
 {
-  "id": "8478b533-2b59-4007-8494-2feec5970f94",
+  "id": "76f862d0-7d9c-46e2-af3f-673d975b0b4e",
   "name": "custom-domain",
-  "description": "Custom domains, CDN caching, and TLS certificates with automatic renewal",
+  "description": "Custom domains and TLS certificates with automatic renewal",
   "bindable": true,
   "metadata": {
-    "displayName": "CDN Route",
-    "documentationUrl": "https://cloud.gov/docs/services/cdn-route/"
+    "displayName": "Custom domain",
+    "documentationUrl": "https://cloud.gov/docs/services/custom-domains/"
   },
   "plan_updateable": true,
   "plans": [
     {
-      "id": "fc055c72-1075-44c9-9aee-bddd52e1b053",
+      "id": "fc1fabb9-b4cb-49a6-a348-670bfbf5d36d",
       "name": "custom-domain",
-      "description": "Custom domains, CDN caching, and TLS certificates with automatic renewal",
+      "description": "Custom domains and TLS certificates with automatic renewal",
       "free": true,
       "metadata": {
-        "displayName": "Content Distribution Network Route"
+        "displayName": "Custom domain"
       }
     }
   ]

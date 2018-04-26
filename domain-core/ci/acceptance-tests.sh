@@ -4,7 +4,7 @@ set -eux
 
 # Set defaults
 TTL="${TTL:-60}"
-CDN_TIMEOUT="${CDN_TIMEOUT:-7200}"
+DOMAINS_TIMEOUT="${DOMAINS_TIMEOUT:-7200}"
 
 suffix="${RANDOM}"
 DOMAIN=$(printf "${DOMAIN}" "${suffix}")
@@ -81,21 +81,21 @@ EOF
 
 if [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
   cat << EOF > ./create-txt.json
-  {
-    "Changes": [
-      {
-        "Action": "CREATE",
-        "ResourceRecordSet": {
-          "Name": "${txt_name}",
-          "Type": "TXT",
-          "TTL": ${txt_ttl},
-          "ResourceRecords": [
-            {"Value": "\"${txt_value}\""}
-          ]
-        }
+{
+  "Changes": [
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "${txt_name}",
+        "Type": "TXT",
+        "TTL": ${txt_ttl},
+        "ResourceRecords": [
+          {"Value": "\"${txt_value}\""}
+        ]
       }
-    ]
-  }
+    }
+  ]
+}
 EOF
 fi
 
@@ -110,7 +110,7 @@ elif [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
 fi
 
 # Wait for provision to complete
-elapsed="${CDN_TIMEOUT}"
+elapsed="${DOMAINS_TIMEOUT}"
 until [ "${elapsed}" -le 0 ]; do
   status=$(cf curl "/v2/service_instances/${service_guid}")
   state=$(echo "${status}" | jq -r '.entity.last_operation.state')
@@ -140,7 +140,7 @@ fi
 cat << EOF > "${path}/app/manifest.yml"
 ---
 applications:
-- name: cdn-broker-test-${CHALLENGE_TYPE}
+- name: domain-broker-test-${CHALLENGE_TYPE}
   buildpack: staticfile_buildpack
   domain: ${DOMAIN}
   no-hostname: true
@@ -148,10 +148,10 @@ EOF
 
 cf push -f "${path}/app/manifest.yml" -p "${path}/app"
 
-# Assert expected response from cdn
-elapsed="${CDN_TIMEOUT}"
+# Assert expected response from domain
+elapsed="${DOMAINS_TIMEOUT}"
 until [ "${elapsed}" -le 0 ]; do
-  if curl "${curl_args[@]}" "https://${DOMAIN}" | grep "CDN Broker Test"; then
+  if curl "${curl_args[@]}" "https://${DOMAIN}" | grep "Domain Broker Test"; then
     break
   fi
   let elapsed-=60
@@ -168,39 +168,39 @@ if [ "${DELETE_SERVICE:-"true"}" == "true" ]; then
 
   # Delete DNS record(s)
   cat << EOF > ./delete-cname.json
-  {
-    "Changes": [
-      {
-        "Action": "DELETE",
-        "ResourceRecordSet": {
-          "Name": "${domain_external}.",
-          "Type": "CNAME",
-          "TTL": ${TTL},
-          "ResourceRecords": [
-            {"Value": "${domain_internal}"}
-          ]
-        }
+{
+  "Changes": [
+    {
+      "Action": "DELETE",
+      "ResourceRecordSet": {
+        "Name": "${domain_external}.",
+        "Type": "CNAME",
+        "TTL": ${TTL},
+        "ResourceRecords": [
+          {"Value": "${domain_internal}"}
+        ]
       }
-    ]
-  }
+    }
+  ]
+}
 EOF
   if [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
     cat << EOF > ./delete-txt.json
+{
+  "Changes": [
     {
-      "Changes": [
-        {
-          "Action": "DELETE",
-          "ResourceRecordSet": {
-            "Name": "${txt_name}.",
-            "Type": "TXT",
-            "TTL": ${txt_ttl},
-            "ResourceRecords": [
-              {"Value": "${txt_value}"}
-            ]
-          }
-        }
-      ]
+      "Action": "DELETE",
+      "ResourceRecordSet": {
+        "Name": "${txt_name}.",
+        "Type": "TXT",
+        "TTL": ${txt_ttl},
+        "ResourceRecords": [
+          {"Value": "${txt_value}"}
+        ]
+      }
     }
+  ]
+}
 EOF
 
   aws route53 change-resource-record-sets \
@@ -216,7 +216,7 @@ EOF
   cf delete-service -f "${SERVICE_INSTANCE_NAME}"
 
   # Wait for deprovision to complete
-  elapsed="${CDN_TIMEOUT}"
+  elapsed="${DOMAINS_TIMEOUT}"
   until [ "${elapsed}" -le 0 ]; do
     if ! cf service "${SERVICE_INSTANCE_NAME}"; then
       deleted="true"
