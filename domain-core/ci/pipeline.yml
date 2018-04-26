@@ -95,6 +95,7 @@ jobs:
         DOMAIN: ((domain-url-development))
         DOMAINS_TIMEOUT: ((domains-timeout))
         CA_CERT: ((acceptance-test-ca-cert-development))
+        DELETE_SERVICE: ((acceptance-test-delete-service-development))
     - task: acceptance-tests-dns-01
       file: broker-src/ci/acceptance-tests.yml
       params:

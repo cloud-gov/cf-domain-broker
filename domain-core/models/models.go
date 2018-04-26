@@ -426,6 +426,7 @@ func (m *RouteManager) purgeCertificate(route *Route, cert *Certificate) error {
 		if err := m.iam.DeleteCertificate(cert.Name); err != nil {
 			if aerr, ok := err.(awserr.Error); ok {
 				if aerr.Code() == iam.ErrCodeDeleteConflictException {
+					time.Sleep(1 * time.Second)
 					continue
 				}
 			}
@@ -529,13 +530,13 @@ func (m *RouteManager) RenewAll() {
 	m.logger.Info("Looking for routes that are expiring soon")
 
 	m.db.Having(
-		"max(expires) < now() + interval '30 days'",
+		fmt.Sprintf("max(expires) < now() + interval '%d days'", m.settings.RenewDays),
 	).Group(
-		"routes.id",
+		"routes.guid",
 	).Where(
 		"state = ?", string(Provisioned),
 	).Joins(
-		"join certificates on routes.id = certificates.route_id",
+		"join certificates on routes.guid = certificates.route_guid",
 	).Find(&routes)
 
 	m.logger.Info("Found routes that need renewal", lager.Data{
@@ -703,6 +704,7 @@ func (m *RouteManager) deployCertificate(route *Route, cert acme.CertificateReso
 		}); err != nil {
 			if aerr, ok := err.(awserr.Error); ok {
 				if aerr.Code() == elbv2.ErrCodeCertificateNotFoundException {
+					time.Sleep(1 * time.Second)
 					continue
 				}
 			}

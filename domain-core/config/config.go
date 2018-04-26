@@ -27,6 +27,7 @@ type Settings struct {
 	ClientID             string `envconfig:"client_id" required:"true"`
 	ClientSecret         string `envconfig:"client_secret" required:"true"`
 	Schedule             string `envconfig:"schedule" default:"0 0 * * * *"`
+	RenewDays            int    `envconfig:"renew_days" default:"30"`
 }
 
 func NewSettings() (Settings, error) {
