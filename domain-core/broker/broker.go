@@ -136,7 +136,7 @@ func (b *CdnServiceBroker) Deprovision(
 ) (brokerapi.DeprovisionServiceSpec, error) {
 	err := b.manager.Destroy(instanceID)
 	if err != nil {
-		return brokerapi.DeprovisionServiceSpec{}, nil
+		return brokerapi.DeprovisionServiceSpec{}, err
 	}
 
 	return brokerapi.DeprovisionServiceSpec{IsAsync: false}, nil

@@ -29,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/s3"
 
 	"github.com/18F/cf-domain-broker-alb/config"
@@ -178,10 +179,13 @@ func (r *Route) loadUser(db *gorm.DB) (utils.User, error) {
 }
 
 type Certificate struct {
-	RouteId     uint
+	gorm.Model
+	RouteGUID   string
 	Domain      string
 	CertURL     string
 	Certificate []byte
+	ARN         string
+	Name        string
 	Expires     time.Time `gorm:"index"`
 }
 
@@ -400,6 +404,39 @@ func (m *RouteManager) stillActive(r *Route) error {
 	return nil
 }
 
+func (m *RouteManager) purgeCertificate(route *Route, cert *Certificate) error {
+	m.logger.Info("remove-listener-cert", lager.Data{
+		"guid":        route.GUID,
+		"domains":     route.Domains,
+		"listenerARN": route.ALBProxy.ListenerARN,
+		"certARN":     cert.ARN,
+	})
+	if _, err := m.elbSvc.RemoveListenerCertificates(&elbv2.RemoveListenerCertificatesInput{
+		ListenerArn: aws.String(route.ALBProxy.ListenerARN),
+		Certificates: []*elbv2.Certificate{
+			{CertificateArn: aws.String(cert.ARN)},
+		},
+	}); err != nil {
+		return err
+	}
+
+	// Retry while certificate is in use
+	for {
+		m.logger.Info("delete-cert", lager.Data{"guid": route.GUID, "domains": route.Domains, "name": cert.Name})
+		if err := m.iam.DeleteCertificate(cert.Name); err != nil {
+			if aerr, ok := err.(awserr.Error); ok {
+				if aerr.Code() == iam.ErrCodeDeleteConflictException {
+					continue
+				}
+			}
+			return err
+		}
+		break
+	}
+
+	return nil
+}
+
 func (m *RouteManager) Renew(r *Route) error {
 	err := m.stillActive(r)
 	if err != nil {
@@ -431,13 +468,24 @@ func (m *RouteManager) Renew(r *Route) error {
 		return err
 	}
 
-	if err := m.deployCertificate(r, certResource); err != nil {
+	if err := m.db.First(&r.ALBProxy, ALBProxy{ALBARN: r.ALBProxyARN}).Error; err != nil {
+		return err
+	}
+
+	certARN, certName, err := m.deployCertificate(r, certResource)
+	if err != nil {
+		return err
+	}
+
+	if err := m.purgeCertificate(r, &certRow); err != nil {
 		return err
 	}
 
 	certRow.Domain = certResource.Domain
 	certRow.CertURL = certResource.CertURL
 	certRow.Certificate = certResource.Certificate
+	certRow.ARN = certARN
+	certRow.Name = certName
 	certRow.Expires = expires
 	return m.db.Save(&certRow).Error
 }
@@ -534,6 +582,10 @@ func (m *RouteManager) updateProvisioning(r *Route) error {
 	}
 	m.logger.Info("loaded-user", lager.Data{"guid": r.GUID, "domains": r.Domains, "user": user})
 
+	if err := m.db.First(&r.ALBProxy, ALBProxy{ALBARN: r.ALBProxyARN}).Error; err != nil {
+		return err
+	}
+
 	clients, err := m.getClients(&user, m.settings)
 	if err != nil {
 		return err
@@ -558,7 +610,8 @@ func (m *RouteManager) updateProvisioning(r *Route) error {
 	if err != nil {
 		return err
 	}
-	if err := m.deployCertificate(r, cert); err != nil {
+	certARN, certName, err := m.deployCertificate(r, cert)
+	if err != nil {
 		return err
 	}
 
@@ -566,6 +619,8 @@ func (m *RouteManager) updateProvisioning(r *Route) error {
 		Domain:      cert.Domain,
 		CertURL:     cert.CertURL,
 		Certificate: cert.Certificate,
+		ARN:         certARN,
+		Name:        certName,
 		Expires:     expires,
 	}
 	if err := m.db.Create(&certRow).Error; err != nil {
@@ -575,9 +630,6 @@ func (m *RouteManager) updateProvisioning(r *Route) error {
 	r.State = Provisioned
 	r.Certificate = certRow
 	return m.db.Save(r).Error
-
-	m.logger.Info("distribution-provisioning", lager.Data{"guid": r.GUID})
-	return nil
 }
 
 func (m *RouteManager) Destroy(guid string) error {
@@ -585,7 +637,19 @@ func (m *RouteManager) Destroy(guid string) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Delete certificate from listener and iam
+
+	if err := m.db.First(&route.ALBProxy, ALBProxy{ALBARN: route.ALBProxyARN}).Error; err != nil {
+		return err
+	}
+	var certRow Certificate
+	if err := m.db.Model(route).Related(&certRow, "Certificate").Error; err != nil {
+		return err
+	}
+
+	if err := m.purgeCertificate(route, &certRow); err != nil {
+		return err
+	}
+
 	return m.db.Delete(route).Error
 }
 
@@ -613,31 +677,26 @@ func (m *RouteManager) solveChallenges(clients map[acme.Challenge]*acme.Client, 
 	return failures
 }
 
-func (m *RouteManager) deployCertificate(route *Route, cert acme.CertificateResource) error {
+func (m *RouteManager) deployCertificate(route *Route, cert acme.CertificateResource) (string, string, error) {
 	expires, err := acme.GetPEMCertExpiration(cert.Certificate)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 
 	name := fmt.Sprintf("cf-domains-%s-%s", route.GUID, expires.Format("2006-01-02_15-04-05"))
 	m.logger.Info("upload-cert", lager.Data{"guid": route.GUID, "domains": route.Domains, "name": name})
-	certARN, err := m.iam.UploadCertificate(name, m.settings.IamPathPrefix, cert)
+	certARN, certName, err := m.iam.UploadCertificate(name, m.settings.IamPathPrefix, cert)
 	if err != nil {
-		return err
-	}
-
-	var albProxy ALBProxy
-	if err := m.db.First(&albProxy, ALBProxy{ALBARN: route.ALBProxyARN}).Error; err != nil {
-		return err
+		return "", "", err
 	}
 
 	for {
 		m.logger.Info("add-listener-cert", lager.Data{
-			"listenerARN": albProxy.ListenerARN,
+			"listenerARN": route.ALBProxy.ListenerARN,
 			"certARN":     certARN,
 		})
 		if _, err := m.elbSvc.AddListenerCertificates(&elbv2.AddListenerCertificatesInput{
-			ListenerArn: aws.String(albProxy.ListenerARN),
+			ListenerArn: aws.String(route.ALBProxy.ListenerARN),
 			Certificates: []*elbv2.Certificate{
 				{CertificateArn: aws.String(certARN)},
 			},
@@ -647,12 +706,12 @@ func (m *RouteManager) deployCertificate(route *Route, cert acme.CertificateReso
 					continue
 				}
 			}
-			return err
+			return "", "", err
 		}
 		break
 	}
 
-	return nil
+	return certARN, certName, nil
 }
 
 func (m *RouteManager) GetDNSInstructions(route *Route) (string, error) {

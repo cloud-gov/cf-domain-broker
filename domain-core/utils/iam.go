@@ -8,7 +8,7 @@ import (
 )
 
 type IamIface interface {
-	UploadCertificate(name, path string, cert acme.CertificateResource) (string, error)
+	UploadCertificate(name, path string, cert acme.CertificateResource) (string, string, error)
 	DeleteCertificate(name string) error
 	ListCertificates(path string, callback func(iam.ServerCertificateMetadata) bool) error
 }
@@ -17,7 +17,7 @@ type Iam struct {
 	Service *iam.IAM
 }
 
-func (i *Iam) UploadCertificate(name, path string, cert acme.CertificateResource) (string, error) {
+func (i *Iam) UploadCertificate(name, path string, cert acme.CertificateResource) (string, string, error) {
 	resp, err := i.Service.UploadServerCertificate(&iam.UploadServerCertificateInput{
 		CertificateBody:       aws.String(string(cert.Certificate)),
 		PrivateKey:            aws.String(string(cert.PrivateKey)),
@@ -25,10 +25,10 @@ func (i *Iam) UploadCertificate(name, path string, cert acme.CertificateResource
 		Path: aws.String(path),
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return *resp.ServerCertificateMetadata.Arn, nil
+	return *resp.ServerCertificateMetadata.Arn, *resp.ServerCertificateMetadata.ServerCertificateName, nil
 }
 
 func (i *Iam) ListCertificates(path string, callback func(iam.ServerCertificateMetadata) bool) error {
