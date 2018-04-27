@@ -206,6 +206,7 @@ func (b *DomainBroker) parseProvisionDetails(details brokerapi.ProvisionDetails)
 		err = errors.New("must pass non-empty `domains`")
 		return
 	}
+	err = b.checkDomain(options.Domains, details.OrganizationGUID)
 	return
 }
 
@@ -221,9 +222,6 @@ func (b *DomainBroker) parseUpdateDetails(details brokerapi.UpdateDetails) (opti
 		return
 	}
 	err = b.checkDomain(options.Domains, details.PreviousValues.OrgID)
-	if err != nil {
-		return
-	}
 	return
 }
 

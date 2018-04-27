@@ -12,13 +12,13 @@ import (
 )
 
 func TestBind(t *testing.T) {
-	b := broker.CdnServiceBroker{}
+	b := broker.DomainBroker{}
 	_, err := b.Bind(context.Background(), "", "", brokerapi.BindDetails{})
 	assert.NotNil(t, err)
 }
 
 func TestUnbind(t *testing.T) {
-	b := broker.CdnServiceBroker{}
+	b := broker.DomainBroker{}
 	err := b.Unbind(context.Background(), "", "", brokerapi.UnbindDetails{})
 	assert.NotNil(t, err)
 }

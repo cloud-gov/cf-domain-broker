@@ -25,7 +25,7 @@ func TestLastOperation(t *testing.T) {
 type LastOperationSuite struct {
 	suite.Suite
 	Manager  mocks.RouteManagerIface
-	Broker   *broker.CdnServiceBroker
+	Broker   *broker.DomainBroker
 	cfclient cfmock.Client
 	settings config.Settings
 	logger   lager.Logger
@@ -63,10 +63,8 @@ func (s *LastOperationSuite) TestLastOperationMissing() {
 func (s *LastOperationSuite) TestLastOperationSucceeded() {
 	manager := mocks.RouteManagerIface{}
 	route := &models.Route{
-		State:          models.Provisioned,
-		DomainExternal: "cdn.cloud.gov",
-		DomainInternal: "abc.cloudfront.net",
-		Origin:         "cdn.apps.cloud.gov",
+		State:   models.Provisioned,
+		Domains: []string{"cdn.cloud.gov"},
 	}
 	manager.On("Get", "123").Return(route, nil)
 	manager.On("Poll", route).Return(nil)
@@ -79,20 +77,19 @@ func (s *LastOperationSuite) TestLastOperationSucceeded() {
 
 	operation, err := b.LastOperation(s.ctx, "123", "")
 	s.Equal(operation.State, brokerapi.Succeeded)
-	s.Equal(operation.Description, "Service instance provisioned [cdn.cloud.gov => cdn.apps.cloud.gov]; CDN domain abc.cloudfront.net")
+	s.Equal(operation.Description, "Service instance provisioned; domain(s) cdn.cloud.gov")
 	s.Nil(err)
 }
 
 func (s *LastOperationSuite) TestLastOperationProvisioning() {
 	manager := mocks.RouteManagerIface{}
 	route := &models.Route{
-		State:          models.Provisioning,
-		DomainExternal: "cdn.cloud.gov",
-		Origin:         "cdn.apps.cloud.gov",
-		ChallengeJSON:  []byte("[]"),
+		State:         models.Provisioning,
+		Domains:       []string{"cdn.cloud.gov"},
+		ChallengeJSON: []byte("[]"),
 	}
 	manager.On("Get", "123").Return(route, nil)
-	manager.On("GetDNSInstructions", route).Return([]string{"token"}, nil)
+	manager.On("GetDNSInstructions", route).Return("Provisioning in progress", nil)
 	manager.On("Poll", route).Return(nil)
 	b := broker.New(
 		&manager,
@@ -103,29 +100,6 @@ func (s *LastOperationSuite) TestLastOperationProvisioning() {
 
 	operation, err := b.LastOperation(s.ctx, "123", "")
 	s.Equal(operation.State, brokerapi.InProgress)
-	s.True(strings.Contains(operation.Description, "Provisioning in progress [cdn.cloud.gov => cdn.apps.cloud.gov]"))
-	s.Nil(err)
-}
-
-func (s *LastOperationSuite) TestLastOperationDeprovisioning() {
-	manager := mocks.RouteManagerIface{}
-	route := &models.Route{
-		State:          models.Deprovisioning,
-		DomainExternal: "cdn.cloud.gov",
-		DomainInternal: "abc.cloudfront.net",
-		Origin:         "cdn.apps.cloud.gov",
-	}
-	manager.On("Get", "123").Return(route, nil)
-	manager.On("Poll", route).Return(nil)
-	b := broker.New(
-		&manager,
-		&s.cfclient,
-		s.settings,
-		s.logger,
-	)
-
-	operation, err := b.LastOperation(s.ctx, "123", "")
-	s.Equal(operation.State, brokerapi.InProgress)
-	s.Equal(operation.Description, "Deprovisioning in progress [cdn.cloud.gov => cdn.apps.cloud.gov]; CDN domain abc.cloudfront.net")
+	s.True(strings.Contains(operation.Description, "Provisioning in progress"))
 	s.Nil(err)
 }

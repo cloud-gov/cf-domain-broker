@@ -11,7 +11,7 @@ jobs:
   plan:
   - aggregate:
     - get: broker-src
-      # passed: [test-domains-broker]
+      passed: [test-domains-broker]
       trigger: true
     - get: pipeline-tasks
   - task: create-db

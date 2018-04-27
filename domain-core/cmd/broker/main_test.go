@@ -14,7 +14,7 @@ import (
 
 func TestHTTPHandler(t *testing.T) {
 	brokerAPI := brokerapi.New(
-		&broker.CdnServiceBroker{},
+		&broker.DomainBroker{},
 		lager.NewLogger("main.test"),
 		brokerapi.BrokerCredentials{},
 	)
