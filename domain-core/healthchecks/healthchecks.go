@@ -10,7 +10,7 @@ import (
 var checks = map[string]func(config.Settings) error{
 	"letsencrypt":  LetsEncrypt,
 	"s3":           S3,
-	"cloudfront":   Cloudfront,
+	"alb":          ALB,
 	"cloudfoundry": Cloudfoundry,
 	"postgresql":   Postgresql,
 }

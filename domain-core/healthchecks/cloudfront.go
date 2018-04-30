@@ -3,20 +3,15 @@ package healthchecks
 import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/cloudfront"
+	"github.com/aws/aws-sdk-go/service/elbv2"
 
 	"github.com/18F/cf-domain-broker-alb/config"
 )
 
-func Cloudfront(settings config.Settings) error {
+func ALB(settings config.Settings) error {
 	session := session.New(aws.NewConfig().WithRegion(settings.AwsDefaultRegion))
-	svc := cloudfront.New(session)
+	svc := elbv2.New(session)
 
-	params := &cloudfront.ListDistributionsInput{}
-	_, err := svc.ListDistributions(params)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	_, err := svc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{})
+	return err
 }
