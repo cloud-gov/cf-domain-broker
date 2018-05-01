@@ -19,8 +19,8 @@ type Settings struct {
 	Bucket               string `envconfig:"bucket" required:"true"`
 	ALBPrefix            string `envconfig:"alb_prefix" default:"domains-broker"`
 	IamPathPrefix        string `envconfig:"iam_path_prefix" default:"/domains-broker/"`
-	AwsAccessKeyId       string `envconfig:"aws_access_key_id" required:"true"`
-	AwsSecretAccessKey   string `envconfig:"aws_secret_access_key" required:"true"`
+	AwsAccessKeyId       string `envconfig:"aws_access_key_id"`
+	AwsSecretAccessKey   string `envconfig:"aws_secret_access_key"`
 	AwsDefaultRegion     string `envconfig:"aws_default_region" required:"true"`
 	ServerSideEncryption string `envconfig:"server_side_encryption"`
 	APIAddress           string `envconfig:"api_address" required:"true"`
