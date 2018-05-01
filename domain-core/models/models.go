@@ -759,6 +759,9 @@ func (m *RouteManager) Populate() error {
 	if err := m.elbSvc.DescribeLoadBalancersPages(&elbv2.DescribeLoadBalancersInput{},
 		func(page *elbv2.DescribeLoadBalancersOutput, lastPage bool) bool {
 			for _, lb := range page.LoadBalancers {
+				if *lb.Scheme != elbv2.LoadBalancerSchemeEnumInternetFacing {
+					continue
+				}
 				if strings.HasPrefix(*lb.LoadBalancerName, m.settings.ALBPrefix) {
 					proxy := ALBProxy{
 						ALBARN:     *lb.LoadBalancerArn,
