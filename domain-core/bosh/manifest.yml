@@ -1,0 +1,45 @@
+name: domain-broker
+
+releases:
+- {name: domain-broker, version: latest}
+
+stemcells:
+- alias: default
+  name: bosh-aws-xen-hvm-ubuntu-trusty-go_agent
+  version: latest
+
+update:
+  canaries: 1
+  max_in_flight: 32
+  canary_watch_time: 1000-600000
+  update_watch_time: 1000-600000
+  serial: false
+
+instance_groups:
+- name: domain-broker
+  vm_type: domains-broker
+  vm_extensions:
+  - domains-broker-lb
+  - domains-broker-profile
+  stemcell: default
+  instances: 1
+  azs: [z1]
+  networks:
+  - name: services
+  jobs:
+  - name: domain-broker
+    release: domain-broker
+    properties:
+      broker:
+        broker_username: ((broker-username))
+        broker_password: ((broker-password))
+        database_url: ((database-url))
+        email: ((acme-email))
+        acme_url: ((acme-url))
+        bucket: ((challenge-bucket))
+        alb_prefix: ((alb-prefix))
+        iam_path_prefix: ((iam-path-prefix))
+        aws_region: ((aws-region))
+        api_address: ((api-url))
+        client_id: ((client-id))
+        client_secret: ((client-secret))
