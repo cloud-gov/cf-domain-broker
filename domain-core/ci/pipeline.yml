@@ -91,71 +91,62 @@ jobs:
         <<: *acceptance-tests-params-development
         CHALLENGE_TYPE: DNS-01
 
-# - name: push-cf-cdn-service-broker-staging
-#   plan:
-#   - aggregate:
-#     - get: broker-src
-#       passed: [test-domains-broker]
-#       trigger: true
-#     - get: pipeline-tasks
-#   - task: create-db
-#     file: broker-src/ci/create-db.yml
-#     params:
-#       # Note: Name must match service name in manifest
-#       SERVICE_TYPE: aws-rds
-#       SERVICE_NAME: rds-cdn-broker
-#       SERVICE_PLAN: shared-psql
-#       <<: *cf-creds-staging
-#   - aggregate:
-#     - put: broker-deploy-staging
-#       params:
-#         path: broker-src
-#         manifest: broker-src/manifest-broker.yml
-#         environment_variables: &cfenv-staging
-#           BROKER_USERNAME: ((cdn-broker-user-staging))
-#           BROKER_PASSWORD: ((cdn-broker-pass-staging))
-#           EMAIL: ((cdn-broker-email-staging))
-#           ACME_URL: ((cdn-broker-acme-url-staging))
-#           BUCKET: ((cdn-broker-bucket-staging))
-#           IAM_PATH_PREFIX: ((cdn-broker-iam-path-prefix-staging))
-#           AWS_ACCESS_KEY_ID: ((cdn-broker-access-key-id-staging))
-#           AWS_SECRET_ACCESS_KEY: ((cdn-broker-secret-access-key-staging))
-#           AWS_DEFAULT_REGION: ((cdn-broker-region-staging))
-#           SERVER_SIDE_ENCRYPTION: AES256
-#           API_ADDRESS: ((cf-api-url-staging))
-#           CLIENT_ID: ((cdn-broker-client-id-staging))
-#           CLIENT_SECRET: ((cdn-broker-client-secret-staging))
-#     - put: broker-deploy-staging
-#       params:
-#         path: broker-src
-#         manifest: broker-src/manifest-cron.yml
-#         environment_variables: *cfenv-staging
-#   - task: update-broker
-#     file: pipeline-tasks/register-service-broker.yml
-#     params:
-#       <<: *cf-creds-staging
-#       BROKER_NAME: cdn-broker
-#       AUTH_USER: ((cdn-broker-user-staging))
-#       AUTH_PASS: ((cdn-broker-pass-staging))
-#       SERVICES: custom-domain
-#   on_failure:
-#     put: slack
-#     params:
-#       text: |
-#         :x: FAILED to deploy cf-cdn-service-broker on ((cf-api-url-staging))
-#         <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
-#       channel: ((slack-channel))
-#       username: ((slack-username))
-#       icon_url: ((slack-icon-url))
-#   on_success:
-#     put: slack
-#     params:
-#       text: |
-#         :white_check_mark: Successfully deployed cf-cdn-service-broker on ((cf-api-url-staging))
-#         <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
-#       channel: ((slack-channel))
-#       username: ((slack-username))
-#       icon_url: ((slack-icon-url))
+
+- name: deploy-staging
+  plan:
+  - aggregate:
+    - get: broker-src
+      passed: [test-domains-broker]
+      trigger: true
+    - get: pipeline-tasks
+    - get: broker-release
+      trigger: true
+    - get: stemcell
+      trigger: true
+    - get: terraform-yaml
+      resource: terraform-yaml-staging
+    - get: common
+      resource: common-staging
+      trigger: true
+  - task: terraform-secrets
+    file: broker-src/ci/terraform-secrets.yml
+  - put: staging-deployment
+    params:
+      stemcells:
+      - stemcell/*.tgz
+      releases:
+      - broker-release/*.tgz
+      manifest: broker-src/bosh/manifest.yml
+      vars_files:
+      - terraform-secrets/terraform.yml
+      - common/secrets.yml
+  - task: update-broker
+    file: pipeline-tasks/register-service-broker.yml
+    params:
+      <<: *cf-creds-staging
+      BROKER_NAME: domains-broker
+      BROKER_URL: ((broker-url-staging))
+      AUTH_USER: ((domains-broker-user-staging))
+      AUTH_PASS: ((domains-broker-pass-staging))
+      SERVICES: custom-domain
+  on_failure:
+    put: slack
+    params:
+      text: |
+        :x: FAILED to deploy cf-domains-service-broker on ((cf-api-url-staging))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
+  on_success:
+    put: slack
+    params:
+      text: |
+        :white_check_mark: Successfully deployed cf-domains-service-broker on ((cf-api-url-staging))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
 
 # - name: acceptance-tests-staging
 #   serial: true
