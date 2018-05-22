@@ -148,31 +148,33 @@ jobs:
       username: ((slack-username))
       icon_url: ((slack-icon-url))
 
-# - name: acceptance-tests-staging
-#   serial: true
-#   plan:
-#   - get: broker-src
-#     passed: [push-cf-cdn-service-broker-staging]
-#     trigger: true
-#   - aggregate:
-#     - task: acceptance-tests-http-01
-#       file: broker-src/ci/acceptance-tests.yml
-#       params: &acceptance-tests-params-staging
-#         <<: *cf-creds-staging
-#         SERVICE_NAME: custom-domain
-#         PLAN_NAME: custom-domain
-#         SERVICE_INSTANCE_NAME: cdn-acceptance-test-%s
-#         CHALLENGE_TYPE: HTTP-01
-#         AWS_ACCESS_KEY_ID: ((cdn-broker-access-key-id-staging))
-#         AWS_SECRET_ACCESS_KEY: ((cdn-broker-secret-access-key-staging))
-#         HOSTED_ZONE_ID: ((hosted-zone-id-staging))
-#         DOMAIN: ((domain-url-staging))
-#         DOMAINS_TIMEOUT: ((domains-timeout))
-#     - task: acceptance-tests-dns-01
-#       file: broker-src/ci/acceptance-tests.yml
-#       params:
-#         <<: *acceptance-tests-params-staging
-#         CHALLENGE_TYPE: DNS-01
+- name: acceptance-tests-staging
+  serial: true
+  plan:
+  - get: broker-src
+    passed: [deploy-staging]
+    trigger: true
+  - aggregate:
+    - task: acceptance-tests-http-01
+      file: broker-src/ci/acceptance-tests.yml
+      params: &acceptance-tests-params-staging
+        <<: *cf-creds-staging
+        SERVICE_NAME: custom-domain
+        PLAN_NAME: custom-domain
+        SERVICE_INSTANCE_NAME: domains-acceptance-test-%s
+        CHALLENGE_TYPE: HTTP-01
+        AWS_ACCESS_KEY_ID: ((domains-broker-access-key-id-acceptance-staging))
+        AWS_SECRET_ACCESS_KEY: ((domains-broker-secret-access-key-acceptance-staging))
+        HOSTED_ZONE_ID: ((hosted-zone-id-staging))
+        DOMAIN: ((domain-url-staging))
+        DOMAINS_TIMEOUT: ((domains-timeout))
+        CA_CERT: ((acceptance-test-ca-cert-staging))
+        DELETE_SERVICE: ((acceptance-test-delete-service-staging))
+    - task: acceptance-tests-dns-01
+      file: broker-src/ci/acceptance-tests.yml
+      params:
+        <<: *acceptance-tests-params-staging
+        CHALLENGE_TYPE: DNS-01
 
 # - name: push-cf-cdn-service-broker-production
 #   plan:
@@ -307,6 +309,22 @@ resources:
     bosh_cert: bosh.pem
     region: ((aws-region))
 
+- name: terraform-yaml-staging
+  type: s3-iam
+  source:
+    bucket: ((tf-state-bucket))
+    versioned_file: ((tf-state-file-staging))
+    region_name: ((aws-region))
+
+- name: common-staging
+  type: cg-common
+  source:
+    bucket_name: ((secrets-bucket-staging))
+    secrets_file: domain-broker-staging.yml
+    secrets_passphrase: ((secrets-passphrase-staging))
+    bosh_cert: bosh.pem
+    region: ((aws-region))
+
 - name: development-deployment
   type: bosh-deployment
   source:
@@ -316,14 +334,14 @@ resources:
     ca_cert: ((ca-cert))
     deployment: domain-broker
 
-# - name: staging-deployment
-#   type: bosh-deployment
-#   source:
-#     target: ((bosh-target-staging))
-#     client: ((bosh-client-staging))
-#     client_secret: ((bosh-client-secret-staging))
-#     ca_cert: ((ca-cert))
-#     deployment: domain-broker
+- name: staging-deployment
+  type: bosh-deployment
+  source:
+    target: ((bosh-target-staging))
+    client: ((bosh-client-staging))
+    client_secret: ((bosh-client-secret-staging))
+    ca_cert: ((ca-cert))
+    deployment: domain-broker
 
 # - name: production-deployment
 #   type: bosh-deployment
