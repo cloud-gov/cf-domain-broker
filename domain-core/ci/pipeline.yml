@@ -252,7 +252,6 @@ jobs:
         HOSTED_ZONE_ID: ((hosted-zone-id-production))
         DOMAIN: ((domain-url-production))
         DOMAINS_TIMEOUT: ((domains-timeout))
-        CA_CERT: ((acceptance-test-ca-cert-production))
         DELETE_SERVICE: ((acceptance-test-delete-service-production))
     - task: acceptance-tests-dns-01
       file: broker-src/ci/acceptance-tests.yml
