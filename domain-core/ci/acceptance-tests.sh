@@ -10,6 +10,7 @@ suffix="${RANDOM}"
 DOMAIN=$(printf "${DOMAIN}" "${suffix}")
 SERVICE_INSTANCE_NAME=$(printf "${SERVICE_INSTANCE_NAME}" "${suffix}")
 
+curl_args=""
 if [ -n "${CA_CERT:-}" ]; then
   echo "${CA_CERT}" > ca.pem
   curl_args="--cacert ca.pem"
