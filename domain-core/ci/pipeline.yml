@@ -184,8 +184,10 @@ jobs:
       trigger: true
     - get: pipeline-tasks
     - get: broker-release
+      passed: [deploy-staging]
       trigger: true
     - get: stemcell
+      passed: [deploy-staging]
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-production
