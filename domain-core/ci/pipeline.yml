@@ -154,6 +154,8 @@ jobs:
   - get: broker-src
     passed: [deploy-staging]
     trigger: true
+  - get: broker-release
+  - get: stemcell
   - aggregate:
     - task: acceptance-tests-http-01
       file: broker-src/ci/acceptance-tests.yml
@@ -184,10 +186,10 @@ jobs:
       trigger: true
     - get: pipeline-tasks
     - get: broker-release
-      passed: [deploy-staging]
+      passed: [acceptance-tests-staging]
       trigger: true
     - get: stemcell
-      passed: [deploy-staging]
+      passed: [acceptance-tests-staging]
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-production
