@@ -150,7 +150,7 @@ cf push -f "${path}/app/manifest.yml" -p "${path}/app"
 # Assert expected response from domain
 elapsed="${DOMAINS_TIMEOUT}"
 until [ "${elapsed}" -le 0 ]; do
-  if curl "${curl_args}" "https://${DOMAIN}" | grep "Domain Broker Test"; then
+  if curl ${curl_args} "https://${DOMAIN}" | grep "Domain Broker Test"; then
     break
   fi
   let elapsed-=60
