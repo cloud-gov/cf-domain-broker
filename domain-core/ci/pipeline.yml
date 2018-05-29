@@ -105,8 +105,7 @@ jobs:
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-staging
-    - get: common
-      resource: common-staging
+    - get: common-staging
       trigger: true
   - task: terraform-secrets
     file: broker-src/ci/terraform-secrets.yml
@@ -119,7 +118,7 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common/secrets.yml
+      - common-staging/domain-broker-staging-decrypted.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -313,13 +312,11 @@ resources:
     region_name: ((aws-region))
 
 - name: common-staging
-  type: cg-common
+  type: s3-iam
   source:
-    bucket_name: ((secrets-bucket-staging))
-    secrets_file: domain-broker-staging.yml
-    secrets_passphrase: ((secrets-passphrase-staging))
-    bosh_cert: bosh.pem
-    region: ((aws-region))
+    bucket: ((secrets-bucket-staging))
+    versioned_file: domain-broker-staging-decrypted.yml
+    region_name: ((aws-region))
 
 - name: development-deployment
   type: bosh-deployment
