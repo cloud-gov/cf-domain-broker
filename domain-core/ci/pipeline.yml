@@ -192,8 +192,7 @@ jobs:
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-production
-    - get: common
-      resource: common-production
+    - get: common-production
       trigger: true
   - task: terraform-secrets
     file: broker-src/ci/terraform-secrets.yml
@@ -206,7 +205,7 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common/secrets.yml
+      - common-production/domain-broker-production-decrypted.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -346,12 +345,10 @@ resources:
     deployment: domain-broker
 
 - name: common-production
-  type: cg-common
+  type: s3-iam
   source:
-    bucket_name: ((secrets-bucket-production))
-    secrets_file: domain-broker-production.yml
-    secrets_passphrase: ((secrets-passphrase-production))
-    bosh_cert: bosh.pem
+    bucket: ((secrets-bucket-production))
+    secrets_file: domain-broker-production-decrypted.yml
     region: ((aws-region))
 
 - name: terraform-yaml-production
