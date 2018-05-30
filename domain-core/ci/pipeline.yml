@@ -33,7 +33,7 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common-development/domain-broker-development-decrypted.yml
+      - common-development/domain-broker-development.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -117,7 +117,7 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common-staging/domain-broker-staging-decrypted.yml
+      - common-staging/domain-broker-staging.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -204,7 +204,7 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common-production/domain-broker-production-decrypted.yml
+      - common-production/domain-broker-production.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -297,7 +297,7 @@ resources:
   type: s3-iam
   source:
     bucket: ((secrets-bucket-development))
-    versioned_file: domain-broker-development-decrypted.yml
+    versioned_file: domain-broker-development.yml
     region_name: ((aws-region))
 
 - name: terraform-yaml-staging
@@ -311,7 +311,7 @@ resources:
   type: s3-iam
   source:
     bucket: ((secrets-bucket-staging))
-    versioned_file: domain-broker-staging-decrypted.yml
+    versioned_file: domain-broker-staging.yml
     region_name: ((aws-region))
 
 - name: development-deployment
@@ -345,7 +345,7 @@ resources:
   type: s3-iam
   source:
     bucket: ((secrets-bucket-production))
-    versioned_file: domain-broker-production-decrypted.yml
+    versioned_file: domain-broker-production.yml
     region_name: ((aws-region))
 
 - name: terraform-yaml-production
