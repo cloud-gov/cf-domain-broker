@@ -298,7 +298,7 @@ resources:
   source:
     bucket: ((secrets-bucket-development))
     versioned_file: domain-broker-development-decrypted.yml
-    aws_region: ((aws-region))
+    region_name: ((aws-region))
 
 - name: terraform-yaml-staging
   type: s3-iam
