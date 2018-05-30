@@ -20,8 +20,7 @@ jobs:
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-development
-    - get: common
-      resource: common-development
+    - get: common-development
       trigger: true
   - task: terraform-secrets
     file: broker-src/ci/terraform-secrets.yml
@@ -34,7 +33,7 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common/secrets.yml
+      - common-development/domain-broker-development-decrypted.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -295,13 +294,11 @@ resources:
     region_name: ((aws-region))
 
 - name: common-development
-  type: cg-common
+  type: s3-iam
   source:
-    bucket_name: ((secrets-bucket-development))
-    secrets_file: domain-broker-development.yml
-    secrets_passphrase: ((secrets-passphrase-development))
-    bosh_cert: bosh.pem
-    region: ((aws-region))
+    bucket: ((secrets-bucket-development))
+    versioned_file: domain-broker-development-decrypted.yml
+    aws_region: ((aws-region))
 
 - name: terraform-yaml-staging
   type: s3-iam
@@ -364,11 +361,6 @@ resources:
     url: ((slack-webhook-url))
 
 resource_types:
-- name: cg-common
-  type: docker-image
-  source:
-    repository: 18fgsa/cg-common-resource
-
 - name: s3-iam
   type: docker-image
   source:
