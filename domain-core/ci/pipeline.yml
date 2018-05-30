@@ -349,7 +349,7 @@ resources:
   source:
     bucket: ((secrets-bucket-production))
     versioned_file: domain-broker-production-decrypted.yml
-    region: ((aws-region))
+    region_name: ((aws-region))
 
 - name: terraform-yaml-production
   type: s3-iam
