@@ -18,6 +18,8 @@ update:
 variables:
 - name: broker-password
   type: password
+- name: broker-username
+  type: value
 
 instance_groups:
 - name: domain-broker
