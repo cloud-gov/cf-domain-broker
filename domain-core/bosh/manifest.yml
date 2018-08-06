@@ -15,6 +15,10 @@ update:
   update_watch_time: 1000-600000
   serial: false
 
+variables:
+- name: broker-password
+  type: password
+
 instance_groups:
 - name: domain-broker
   vm_type: domains-broker
@@ -42,4 +46,4 @@ instance_groups:
         aws_region: ((aws-region))
         api_address: ((api-url))
         client_id: ((client-id))
-        client_secret: ((client-secret))
+        client_secret: ((/cf/clients/cdn-broker-secret))

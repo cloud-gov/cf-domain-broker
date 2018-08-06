@@ -33,7 +33,6 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common-development/domain-broker-development.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
