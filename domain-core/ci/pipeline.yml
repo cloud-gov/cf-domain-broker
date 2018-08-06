@@ -20,8 +20,6 @@ jobs:
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-development
-    - get: common-development
-      trigger: true
   - task: terraform-secrets
     file: broker-src/ci/terraform-secrets.yml
   - put: development-deployment
@@ -292,13 +290,6 @@ resources:
   source:
     bucket: ((tf-state-bucket))
     versioned_file: ((tf-state-file-development))
-    region_name: ((aws-region))
-
-- name: common-development
-  type: s3-iam
-  source:
-    bucket: ((secrets-bucket))
-    versioned_file: domain-broker-development.yml
     region_name: ((aws-region))
 
 - name: terraform-yaml-staging
