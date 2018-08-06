@@ -46,4 +46,4 @@ instance_groups:
         aws_region: ((aws-region))
         api_address: ((api-url))
         client_id: ((client-id))
-        client_secret: ((/cf/clients/client-secret))
+        client_secret: ((/cf/clients/cdn-broker-secret))
