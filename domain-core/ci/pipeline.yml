@@ -152,7 +152,9 @@ jobs:
     passed: [deploy-staging]
     trigger: true
   - get: broker-release
+    trigger: true
   - get: stemcell
+    trigger: true
   - aggregate:
     - task: acceptance-tests-http-01
       file: broker-src/ci/acceptance-tests.yml
@@ -295,7 +297,7 @@ resources:
 - name: common-development
   type: s3-iam
   source:
-    bucket: ((secrets-bucket-development))
+    bucket: ((secrets-bucket))
     versioned_file: domain-broker-development.yml
     region_name: ((aws-region))
 
@@ -309,7 +311,7 @@ resources:
 - name: common-staging
   type: s3-iam
   source:
-    bucket: ((secrets-bucket-staging))
+    bucket: ((secrets-bucket))
     versioned_file: domain-broker-staging.yml
     region_name: ((aws-region))
 
@@ -343,7 +345,7 @@ resources:
 - name: common-production
   type: s3-iam
   source:
-    bucket: ((secrets-bucket-production))
+    bucket: ((secrets-bucket))
     versioned_file: domain-broker-production.yml
     region_name: ((aws-region))
 
