@@ -153,7 +153,9 @@ jobs:
     passed: [deploy-staging]
     trigger: true
   - get: broker-release
+    trigger: true
   - get: stemcell
+    trigger: true
   - aggregate:
     - task: acceptance-tests-http-01
       file: broker-src/ci/acceptance-tests.yml
