@@ -101,8 +101,6 @@ jobs:
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-staging
-    - get: common-staging
-      trigger: true
   - task: terraform-secrets
     file: broker-src/ci/terraform-secrets.yml
   - put: staging-deployment
@@ -114,7 +112,6 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common-staging/domain-broker-staging.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -190,8 +187,6 @@ jobs:
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-production
-    - get: common-production
-      trigger: true
   - task: terraform-secrets
     file: broker-src/ci/terraform-secrets.yml
   - put: production-deployment
@@ -203,7 +198,6 @@ jobs:
       manifest: broker-src/bosh/manifest.yml
       vars_files:
       - terraform-secrets/terraform.yml
-      - common-production/domain-broker-production.yml
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
@@ -299,13 +293,6 @@ resources:
     versioned_file: ((tf-state-file-staging))
     region_name: ((aws-region))
 
-- name: common-staging
-  type: s3-iam
-  source:
-    bucket: ((secrets-bucket))
-    versioned_file: domain-broker-staging.yml
-    region_name: ((aws-region))
-
 - name: development-deployment
   type: bosh-deployment
   source:
@@ -332,13 +319,6 @@ resources:
     client_secret: ((bosh-client-secret-production))
     ca_cert: ((ca-cert))
     deployment: domain-broker
-
-- name: common-production
-  type: s3-iam
-  source:
-    bucket: ((secrets-bucket))
-    versioned_file: domain-broker-production.yml
-    region_name: ((aws-region))
 
 - name: terraform-yaml-production
   type: s3-iam
