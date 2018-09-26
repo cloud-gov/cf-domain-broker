@@ -13,12 +13,24 @@ import (
 
 func TestBind(t *testing.T) {
 	b := broker.DomainBroker{}
-	_, err := b.Bind(context.Background(), "", "", brokerapi.BindDetails{})
+	_, err := b.Bind(context.Background(), "", "", brokerapi.BindDetails{}, false)
 	assert.NotNil(t, err)
 }
 
 func TestUnbind(t *testing.T) {
 	b := broker.DomainBroker{}
-	err := b.Unbind(context.Background(), "", "", brokerapi.UnbindDetails{})
+	_, err := b.Unbind(context.Background(), "", "", brokerapi.UnbindDetails{}, false)
+	assert.NotNil(t, err)
+}
+
+func TestGetBinding(t *testing.T) {
+	b := broker.DomainBroker{}
+	_, err := b.GetBinding(context.Background(), "", "")
+	assert.NotNil(t, err)
+}
+
+func TestLastBindingOperation(t *testing.T) {
+	b := broker.DomainBroker{}
+	_, err := b.LastBindingOperation(context.Background(), "", "", brokerapi.PollDetails{})
 	assert.NotNil(t, err)
 }
