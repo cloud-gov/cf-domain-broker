@@ -90,7 +90,8 @@ func (b *DomainBroker) Provision(
 
 func (b *DomainBroker) LastOperation(
 	context context.Context,
-	instanceID, operationData string,
+	instanceID string,
+	details brokerapi.PollDetails,
 ) (brokerapi.LastOperation, error) {
 	route, err := b.manager.Get(instanceID)
 	if err != nil {
@@ -146,6 +147,7 @@ func (b *DomainBroker) Bind(
 	context context.Context,
 	instanceID, bindingID string,
 	details brokerapi.BindDetails,
+	asyncAllowed bool,
 ) (brokerapi.Binding, error) {
 	return brokerapi.Binding{}, errors.New("service does not support bind")
 }
@@ -154,8 +156,24 @@ func (b *DomainBroker) Unbind(
 	context context.Context,
 	instanceID, bindingID string,
 	details brokerapi.UnbindDetails,
-) error {
-	return errors.New("service does not support bind")
+	asyncAllowed bool,
+) (brokerapi.UnbindSpec, error) {
+	return brokerapi.UnbindSpec{}, errors.New("service does not support bind")
+}
+
+func (b *DomainBroker) GetBinding(
+	context context.Context,
+	instanceID, bindingID string,
+) (brokerapi.GetBindingSpec, error) {
+	return brokerapi.GetBindingSpec{}, errors.New("service does not support bind")
+}
+
+func (b *DomainBroker) LastBindingOperation(
+	context context.Context,
+	instanceID, bindingID string,
+	details brokerapi.PollDetails,
+) (brokerapi.LastOperation, error) {
+	return brokerapi.LastOperation{}, errors.New("service does not support bind")
 }
 
 func (b *DomainBroker) Update(

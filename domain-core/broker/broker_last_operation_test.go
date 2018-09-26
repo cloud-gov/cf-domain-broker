@@ -54,7 +54,7 @@ func (s *LastOperationSuite) TestLastOperationMissing() {
 		s.logger,
 	)
 
-	operation, err := b.LastOperation(s.ctx, "", "")
+	operation, err := b.LastOperation(s.ctx, "", brokerapi.PollDetails{})
 	s.Equal(operation.State, brokerapi.Failed)
 	s.Equal(operation.Description, "Service instance not found")
 	s.Nil(err)
@@ -75,7 +75,7 @@ func (s *LastOperationSuite) TestLastOperationSucceeded() {
 		s.logger,
 	)
 
-	operation, err := b.LastOperation(s.ctx, "123", "")
+	operation, err := b.LastOperation(s.ctx, "123", brokerapi.PollDetails{})
 	s.Equal(operation.State, brokerapi.Succeeded)
 	s.Equal(operation.Description, "Service instance provisioned; domain(s) cdn.cloud.gov")
 	s.Nil(err)
@@ -98,7 +98,7 @@ func (s *LastOperationSuite) TestLastOperationProvisioning() {
 		s.logger,
 	)
 
-	operation, err := b.LastOperation(s.ctx, "123", "")
+	operation, err := b.LastOperation(s.ctx, "123", brokerapi.PollDetails{})
 	s.Equal(operation.State, brokerapi.InProgress)
 	s.True(strings.Contains(operation.Description, "Provisioning in progress"))
 	s.Nil(err)
