@@ -16,7 +16,7 @@ jobs:
     - get: pipeline-tasks
     - get: broker-release
       trigger: true
-    - get: stemcell
+    - get: stemcell-xenial
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-development
@@ -25,7 +25,7 @@ jobs:
   - put: development-deployment
     params:
       stemcells:
-      - stemcell/*.tgz
+      - stemcell-xenial/*.tgz
       releases:
       - broker-release/*.tgz
       manifest: broker-src/bosh/manifest.yml
@@ -97,7 +97,7 @@ jobs:
     - get: pipeline-tasks
     - get: broker-release
       trigger: true
-    - get: stemcell
+    - get: stemcell-xenial
       trigger: true
     - get: terraform-yaml
       resource: terraform-yaml-staging
@@ -106,7 +106,7 @@ jobs:
   - put: staging-deployment
     params:
       stemcells:
-      - stemcell/*.tgz
+      - stemcell-xenial/*.tgz
       releases:
       - broker-release/*.tgz
       manifest: broker-src/bosh/manifest.yml
@@ -148,7 +148,7 @@ jobs:
     trigger: true
   - get: broker-release
     trigger: true
-  - get: stemcell
+  - get: stemcell-xenial
     trigger: true
   - aggregate:
     - task: acceptance-tests-http-01
@@ -182,7 +182,7 @@ jobs:
     - get: broker-release
       passed: [acceptance-tests-staging]
       trigger: true
-    - get: stemcell
+    - get: stemcell-xenial
       passed: [acceptance-tests-staging]
       trigger: true
     - get: terraform-yaml
@@ -192,7 +192,7 @@ jobs:
   - put: production-deployment
     params:
       stemcells:
-      - stemcell/*.tgz
+      - stemcell-xenial/*.tgz
       releases:
       - broker-release/*.tgz
       manifest: broker-src/bosh/manifest.yml
@@ -274,10 +274,10 @@ resources:
     region_name: ((aws-region))
     regexp: domain-broker-(.*).tgz
 
-- name: stemcell
+- name: stemcell-xenial
   type: bosh-io-stemcell
   source:
-    name: bosh-aws-xen-hvm-ubuntu-trusty-go_agent
+    name: bosh-aws-xen-hvm-ubuntu-xenial-go_agent
 
 - name: terraform-yaml-development
   type: s3-iam
