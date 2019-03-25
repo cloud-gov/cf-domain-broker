@@ -5,7 +5,7 @@ releases:
 
 stemcells:
 - alias: default
-  name: bosh-aws-xen-hvm-ubuntu-trusty-go_agent
+  name: bosh-aws-xen-hvm-ubuntu-xenial-go_agent
   version: latest
 
 update:
