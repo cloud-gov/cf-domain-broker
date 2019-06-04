@@ -14,30 +14,11 @@ The easiest/recommended way to deploy the broker is via the [Concourse](http://c
 1. Deploy the pipeline.
 
     ```bash
-    fly -t lite set-pipeline -n -c ci/pipeline.yml -p deploy-cdn-broker -l ci/credentials.yml
+    fly -t lite set-pipeline -n -c ci/pipeline.yml -p deploy-domains-broker -l ci/credentials.yml
     ```
 
-### Manual
-
-1. Clone this repository, and `cd` into it.
-1. Target the space you want to deploy the broker to.
-
-    ```bash
-    $ cf target -o <org> -s <space>
-    ```
-
-1. Set the `environment_variables` listed in [the deploy pipeline](ci/pipeline.yml).
-1. Deploy the broker as an application.
-
-    ```bash
-    $ cf push
-    ```
-
-1. [Register the broker](http://docs.cloudfoundry.org/services/managing-service-brokers.html#register-broker).
-
-    ```bash
-    $ cf create-service-broker cdn-route [username] [password] [app-url] --space-scoped
-    ```
+### Updating ALBs
+On startup, the broker automatically detects ALBs based on their name. To pick up changes, simply restart the broker.
 
 ## Usage
 
@@ -56,27 +37,27 @@ The easiest/recommended way to deploy the broker is via the [Concourse](http://c
 1. Create a service instance.
 
     ```bash
-    $ cf create-service cdn-route cdn-route my-cdn-route -c '{"domain": "my.domain.gov"}'
+    $ cf create-service custom-domain custom-domain my-domain -c '{"domains": ["my.domain.gov"]}'
 
-    Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
+    Create in progress. Use 'cf services' or 'cf service my-domain' to check operation status.
     ```
 
-    If you have more than one domain you can pass a comma-delimited list to the `domain` parameter, just keep in mind that the broker will wait until all domains are CNAME'd:
+    If you have more than one domain you can pass them as a list to the domains parameter, just keep in mind that the broker will wait until all domains are CNAME'd:
 
     ```bash
-    $ cf create-service cdn-route cdn-route my-cdn-route -c '{"domain": "my.domain.gov,www.my.domain.gov"}'
+    $ cf create-service cdn-route cdn-route my-cdn-route -c '{"domains": ["my.domain.gov","www.my.domain.gov"]}'
 
-    Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
+    Create in progress. Use 'cf services' or 'cf service my-domain' to check operation status.
     ```
 
-1. Get the DNS instructions.
+1. Get the DNS instructions. (note that the target of the CNAME will probably be different for you)
 
     ```bash
-    $ cf service my-cdn-route
+    $ cf service my-domain
 
     Last Operation
     Status: create in progress
-    Message: Provisioning in progress; CNAME domain "my.domain.gov" to "d3kajwa62y9xrp.cloudfront.net."
+    Message: Provisioning in progress; CNAME domain "my.domain.gov" to "production-domains-0-792003535.us-gov-west-1.elb.amazonaws.com"
     ```
 
 1. Create/update your DNS configuration.
@@ -91,75 +72,13 @@ The easiest/recommended way to deploy the broker is via the [Concourse](http://c
     $ cf map-route <app> my.domain.gov
     ```
 
-## Custom origins
-
-If you are pointing your domain to a non-Cloud Foundry application, such as a public S3 bucket, you can pass a custom origin to the broker:
-
-```bash
-$ cf create-service cdn-route cdn-route my-cdn-route \
-    -c '{"domain": "my.domain.gov", "origin": "my-app.apps.cloud.gov"}'
-
-Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
-```
-
-If you need to add a path to your origin, you can pass it in as a parameter:
-
-```bash
-$ cf create-service cdn-route cdn-route my-cdn-route \
-    -c '{"domain": "my.domain.gov", "origin": "my-app.apps.cloud.gov", "path": "/myfolder"}'
-
-Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
-```
-    
-If your origin is non-HTTPS, you'll need to add another parameter:
-
-```bash
-$ cf create-service cdn-route cdn-route my-cdn-route \
-    -c '{"domain": "my.domain.gov", "origin": "my-app.apps.cloud.gov", "insecure_origin": true}'
-
-Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
-```
-
-## Cookie Forwarding
-
-If you do not want cookies forwarded to your origin, you'll need to add another parameter:
-
-```bash
-$ cf create-service cdn-route cdn-route my-cdn-route \
-    -c '{"domain": "my.domain.gov", "cookies": false}'
-
-Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
-```
-
-## Header Forwarding
-
-CloudFront forwards a [limited set of headers](http://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/RequestAndResponseBehaviorCustomOrigin.html#request-custom-headers-behavior) by default. If you want extra headers forwarded to your origin, you'll want to add another parameter. Here we forward both the `User-Agent` and `Referer` headers:
-
-```bash
-$ cf create-service cdn-route cdn-route my-cdn-route \
-    -c '{"domain": "my.domain.gov", "headers": ["User-Agent", "Referer"]}'
-
-Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
-```
-
-CloudFront can forward up to 10 custom headers. Because this broker automatically forwards the `Host` header when not using a [custom origin](#custom-origins), you can whitelist up to nin headers by default; if using a custom origin, you can whitelist up to 10 headers. If you want to exceed this limit or forward all headers, you can use a wildcard:
-
-```bash
-$ cf create-service cdn-route cdn-route my-cdn-route \
-    -c '{"domain": "my.domain.gov", "headers": ["*"]}'
-
-Create in progress. Use 'cf services' or 'cf service my-cdn-route' to check operation status.
-```
-
-When making requests to the origin, CloudFront's caching mechanism associates HTTP requests with their response. The more variation within the forwarded request, the fewer cache hits and the less effective the cache. Limiting the headers forwarded is therefore key to cache performance. Caching is disabled altogether when using a wildcard.
-
 ## Debugging
 
 By default, Cloud Controller will expire asynchronous service instances that have been pending for over one week. If your instance expires, run a dummy update
 to restore it to the pending state so that Cloud Controller will continue to check for updates:
 
 ```bash
-cf update-service my-cdn-route -c '{"timestamp": 20161001}'
+cf update-service my-domain -c '{"timestamp": 20161001}'
 ```
 
 ## Tests
