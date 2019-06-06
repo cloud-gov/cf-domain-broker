@@ -16,17 +16,6 @@ import (
 	"github.com/18F/cf-domain-broker-alb/models"
 )
 
-type Options struct {
-	Domains []string `json:"domains"`
-}
-
-type DomainBroker struct {
-	manager  models.RouteManagerIface
-	cfclient cf.Client
-	settings config.Settings
-	logger   lager.Logger
-}
-
 func New(
 	manager models.RouteManagerIface,
 	cfclient cf.Client,
@@ -40,10 +29,6 @@ func New(
 		logger:   logger,
 	}
 }
-
-var (
-	MAX_HEADER_COUNT = 10
-)
 
 func (*DomainBroker) Services(context context.Context) ([]brokerapi.Service, error) {
 	var service brokerapi.Service

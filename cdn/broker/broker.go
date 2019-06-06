@@ -17,22 +17,6 @@ import (
 	"github.com/18F/cf-cdn-service-broker/utils"
 )
 
-type Options struct {
-	Domain         string   `json:"domain"`
-	Origin         string   `json:"origin"`
-	Path           string   `json:"path"`
-	InsecureOrigin bool     `json:"insecure_origin"`
-	Cookies        bool     `json:"cookies"`
-	Headers        []string `json:"headers"`
-}
-
-type CdnServiceBroker struct {
-	manager  models.RouteManagerIface
-	cfclient cf.Client
-	settings config.Settings
-	logger   lager.Logger
-}
-
 func New(
 	manager models.RouteManagerIface,
 	cfclient cf.Client,
@@ -46,10 +30,6 @@ func New(
 		logger:   logger,
 	}
 }
-
-var (
-	MAX_HEADER_COUNT = 10
-)
 
 func (*CdnServiceBroker) Services(context context.Context) ([]brokerapi.Service, error) {
 	var service brokerapi.Service

@@ -11,17 +11,6 @@ import (
 	"github.com/18F/cf-cdn-service-broker/config"
 )
 
-type IamIface interface {
-	UploadCertificate(name string, cert acme.CertificateResource) (string, error)
-	DeleteCertificate(name string) error
-	ListCertificates(callback func(iam.ServerCertificateMetadata) bool) error
-}
-
-type Iam struct {
-	Settings config.Settings
-	Service  *iam.IAM
-}
-
 func (i *Iam) UploadCertificate(name string, cert acme.CertificateResource) (string, error) {
 	resp, err := i.Service.UploadServerCertificate(&iam.UploadServerCertificateInput{
 		CertificateBody:       aws.String(string(cert.Certificate)),

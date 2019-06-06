@@ -38,6 +38,7 @@ import (
 
 type State string
 
+// todo (mxplusb): I think this can be an iota.
 const (
 	Provisioning  State = "provisioning"
 	Provisioned         = "provisioned"
@@ -60,13 +61,6 @@ func (s *State) Scan(value interface{}) error {
 		return fmt.Errorf("Incompatible type for %s", value)
 	}
 	return nil
-}
-
-type UserData struct {
-	gorm.Model
-	Email string `gorm:"not null"`
-	Reg   []byte
-	Key   []byte
 }
 
 func CreateUser(email string) (utils.User, error) {
@@ -149,65 +143,12 @@ func savePrivateKey(key crypto.PrivateKey) ([]byte, error) {
 	return pem.EncodeToMemory(&pemKey), nil
 }
 
-type ALBProxy struct {
-	ALBARN      string `gorm:"primary_key;column:alb_arn"`
-	ALBDNSName  string `gorm:"column:alb_dns_name"`
-	ListenerARN string
-}
-
-type Route struct {
-	GUID          string         `gorm:"primary_key"`
-	State         State          `gorm:"not null;index"`
-	Domains       pq.StringArray `gorm:"type:text[]"`
-	ChallengeJSON []byte
-
-	UserData   UserData
-	UserDataID int
-
-	ALBProxy    ALBProxy
-	ALBProxyARN string
-
-	Certificate Certificate
-}
-
 func (r *Route) loadUser(db *gorm.DB) (utils.User, error) {
 	var userData UserData
 	if err := db.Model(r).Related(&userData).Error; err != nil {
 		return utils.User{}, err
 	}
 	return LoadUser(userData)
-}
-
-type Certificate struct {
-	gorm.Model
-	RouteGUID   string
-	Domain      string
-	CertURL     string
-	Certificate []byte
-	ARN         string
-	Name        string
-	Expires     time.Time `gorm:"index"`
-}
-
-type RouteManagerIface interface {
-	Create(instanceId string, domains []string) (*Route, error)
-	Update(instanceId string, domains []string) error
-	Destroy(instanceId string) error
-	Get(instanceId string) (*Route, error)
-	Poll(route *Route) error
-	Renew(route *Route) error
-	RenewAll()
-	DeleteOrphanedCerts()
-	GetDNSInstructions(route *Route) (string, error)
-	Populate() error
-}
-
-type RouteManager struct {
-	logger   lager.Logger
-	iam      utils.IamIface
-	elbSvc   elbv2iface.ELBV2API
-	settings config.Settings
-	db       *gorm.DB
 }
 
 func NewManager(

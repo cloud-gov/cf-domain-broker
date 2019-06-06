@@ -165,22 +165,6 @@ func savePrivateKey(key crypto.PrivateKey) ([]byte, error) {
 	return pem.EncodeToMemory(&pemKey), nil
 }
 
-type Route struct {
-	gorm.Model
-	InstanceId     string `gorm:"not null;unique_index"`
-	State          State  `gorm:"not null;index"`
-	ChallengeJSON  []byte
-	DomainExternal string
-	DomainInternal string
-	DistId         string
-	Origin         string
-	Path           string
-	InsecureOrigin bool
-	Certificate    Certificate
-	UserData       UserData
-	UserDataID     int
-}
-
 func (r *Route) GetDomains() []string {
 	return strings.Split(r.DomainExternal, ",")
 }
@@ -193,35 +177,6 @@ func (r *Route) loadUser(db *gorm.DB) (utils.User, error) {
 	}
 
 	return LoadUser(userData)
-}
-
-type Certificate struct {
-	gorm.Model
-	RouteId     uint
-	Domain      string
-	CertURL     string
-	Certificate []byte
-	Expires     time.Time `gorm:"index"`
-}
-
-type RouteManagerIface interface {
-	Create(instanceId, domain, origin, path string, insecureOrigin bool, forwardedHeaders utils.Headers, forwardCookies bool, tags map[string]string) (*Route, error)
-	Update(instanceId string, domain, origin string, path string, insecureOrigin bool, forwardedHeaders utils.Headers, forwardCookies bool) error
-	Get(instanceId string) (*Route, error)
-	Poll(route *Route) error
-	Disable(route *Route) error
-	Renew(route *Route) error
-	RenewAll()
-	DeleteOrphanedCerts()
-	GetDNSInstructions(route *Route) ([]string, error)
-}
-
-type RouteManager struct {
-	logger     lager.Logger
-	iam        utils.IamIface
-	cloudFront utils.DistributionIface
-	settings   config.Settings
-	db         *gorm.DB
 }
 
 func NewManager(
