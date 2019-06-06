@@ -1,0 +1,3 @@
+database-url: postgresql://((terraform_outputs.domains_broker_rds_username)):((terraform_outputs.domains_broker_rds_password))@((terraform_outputs.domains_broker_rds_address)):((terraform_outputs.domains_broker_rds_port))
+challenge-bucket: ((terraform_outputs.challenge_bucket))
+aws-region: ((terraform_outputs.vpc_region))

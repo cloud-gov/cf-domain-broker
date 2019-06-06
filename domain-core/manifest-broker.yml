@@ -1,0 +1,11 @@
+---
+applications:
+- name: domains-broker
+  command: broker
+  buildpack: go_buildpack
+  memory: 128M
+  services:
+  - rds-domains-broker
+  env:
+    GO_INSTALL_PACKAGE_SPEC: "./cmd/broker"
+    GOPACKAGENAME: "github.com/18F/cf-domain-broker-alb"

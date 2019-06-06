@@ -1,0 +1,13 @@
+---
+applications:
+- name: domains-cron
+  command: cron
+  buildpack: go_buildpack
+  memory: 128M
+  services:
+  - rds-domains-broker
+  health-check-type: process
+  no-route: true
+  env:
+    GO_INSTALL_PACKAGE_SPEC: "./cmd/cron"
+    GOPACKAGENAME: "github.com/18F/cf-domain-broker-alb"
