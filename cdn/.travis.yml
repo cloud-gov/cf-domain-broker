@@ -1,8 +1,8 @@
 language: go
 
 go:
-- "1.7"
-- tip
+  - "1.7"
+  - tip
 
 # Dependencies live in /vendor/
 install: true

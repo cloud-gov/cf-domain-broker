@@ -25,7 +25,7 @@ package broker_test
 
 // type UpdateSuite struct {
 // 	suite.Suite
-// 	Manager  mocks.RouteManagerIface
+// 	manager  mocks.RouteManagerIface
 // 	Broker   *broker.CdnServiceBroker
 // 	cfclient cfmock.Client
 // 	settings config.Settings
@@ -34,14 +34,14 @@ package broker_test
 // }
 
 // func (s *UpdateSuite) SetupTest() {
-// 	s.Manager = mocks.RouteManagerIface{}
+// 	s.manager = mocks.RouteManagerIface{}
 // 	s.cfclient = cfmock.Client{}
 // 	s.logger = lager.NewLogger("broker.provision.test")
 // 	s.settings = config.Settings{
 // 		DefaultOrigin: "origin.cloud.gov",
 // 	}
 // 	s.Broker = broker.New(
-// 		&s.Manager,
+// 		&s.manager,
 // 		&s.cfclient,
 // 		s.settings,
 // 		s.logger,
@@ -62,7 +62,7 @@ package broker_test
 // 	details := brokerapi.UpdateDetails{
 // 		RawParameters: json.RawMessage(`{"domain": "domain.gov"}`),
 // 	}
-// 	s.Manager.On("Update", "", "domain.gov", "origin.cloud.gov", "", false, utils.Headers{"Host": true}, true).Return(nil)
+// 	s.manager.On("Update", "", "domain.gov", "origin.cloud.gov", "", false, utils.Headers{"Host": true}, true).Return(nil)
 // 	s.cfclient.On("GetDomainByName", "domain.gov").Return(cfclient.Domain{}, nil)
 // 	_, err := s.Broker.Update(s.ctx, "", details, true)
 // 	s.Nil(err)
@@ -72,7 +72,7 @@ package broker_test
 // 	details := brokerapi.UpdateDetails{
 // 		RawParameters: json.RawMessage(`{"origin": "origin.gov"}`),
 // 	}
-// 	s.Manager.On("Update", "", "", "origin.gov", "", false, utils.Headers{}, true).Return(nil)
+// 	s.manager.On("Update", "", "", "origin.gov", "", false, utils.Headers{}, true).Return(nil)
 // 	s.cfclient.On("GetDomainByName", "domain.gov").Return(cfclient.Domain{}, nil)
 // 	_, err := s.Broker.Update(s.ctx, "", details, true)
 // 	s.Nil(err)
@@ -86,7 +86,7 @@ package broker_test
 // 			"path": "."
 // 		}`),
 // 	}
-// 	s.Manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, utils.Headers{"Host": true}, true).Return(nil)
+// 	s.manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, utils.Headers{"Host": true}, true).Return(nil)
 // 	s.cfclient.On("GetDomainByName", "domain.gov").Return(cfclient.Domain{}, nil)
 // 	_, err := s.Broker.Update(s.ctx, "", details, true)
 // 	s.Nil(err)
@@ -99,7 +99,7 @@ package broker_test
 // 		},
 // 		RawParameters: json.RawMessage(`{"domain": "domain.gov"}`),
 // 	}
-// 	s.Manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, utils.Headers{"Host": true}, true).Return(nil)
+// 	s.manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, utils.Headers{"Host": true}, true).Return(nil)
 // 	s.cfclient.On("GetOrgByGuid", "dfb39134-ab7d-489e-ae59-4ed5c6f42fb5").Return(cfclient.Org{Name: "my-org"}, nil)
 // 	s.cfclient.On("GetDomainByName", "domain.gov").Return(cfclient.Domain{}, errors.New("bad"))
 // 	_, err := s.Broker.Update(s.ctx, "", details, true)
@@ -112,11 +112,11 @@ package broker_test
 // }
 
 // func (s *UpdateSuite) allowUpdateWithExpectedHeaders(expectedHeaders utils.Headers) {
-// 	s.Manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, expectedHeaders, true).Return(nil)
+// 	s.manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, expectedHeaders, true).Return(nil)
 // }
 
 // func (s *UpdateSuite) failOnUpdateWithExpectedHeaders(expectedHeaders utils.Headers) {
-// 	s.Manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, expectedHeaders, true).Return(errors.New("fail"))
+// 	s.manager.On("Update", "", "domain.gov", "origin.cloud.gov", ".", true, expectedHeaders, true).Return(errors.New("fail"))
 // }
 
 // func (s *UpdateSuite) TestSuccessForwardingDuplicatedHostHeader() {

@@ -584,8 +584,25 @@ func (m *RouteManager) Destroy(guid string) error {
 		return err
 	}
 	var certRow Certificate
-	if err := m.db.Model(route).Related(&certRow, "Certificate").Error; err != nil {
-		return err
+	var errs []error
+	fmt.Sprintf("%s")
+	db, err := gorm.Open("postgres")
+	if errs := db.Model(route).Related(&certRow, "Certificate").GetErrors(); len(errs) > 0 {
+		for i := 0; i <len(errs); i++ {
+			if gorm.IsRecordNotFoundError(errs[i]) {
+				// this error is record not found.
+			} else {
+				// this error is something else.
+			}
+		}
+	}
+
+	// there are no errors therefore certRow has been populated because gorm found something
+	// check just to make sure.
+	if len(certRow.Certificate) == 0 || certRow.RouteGUID == "" {
+		// if we get here, the record exists, do something with it.
+	} else {
+		// the record doesn't exist and there are no errors (shouldn't be able to hit this point)
 	}
 
 	if err := m.purgeCertificate(route, &certRow); err != nil {

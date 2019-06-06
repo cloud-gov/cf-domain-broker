@@ -18,20 +18,21 @@ type Certificate struct {
 	Name        string
 }
 
-type Route struct {
+// DomainRoute is a single response type for both custom domains and CDN domains.
+type DomainRoute struct {
 	gorm.Model
-	Id             string `gorm:"primary_key"`
-	InstanceId     string `gorm:"not null;unique_index"`
+	InstanceId     string `gorm:"not null;unique_index;primary_key"`
 	ChallengeJSON  []byte
 	DomainExternal string
 	DomainInternal string
+
+	// Cloudfront Distribution Id.
 	DistId         string
 	Origin         string
 	Path           string
 	InsecureOrigin bool
 	Certificate    Certificate `gorm:"foreignkey:CertRef"`
-	UserData       types.UserData
-	UserDataID     int
+	UserData       UserData `gorm:"foreignkey:UserRef"`
 	ALBProxy       types.ALBProxy
 	ALBProxyARN    string
 }

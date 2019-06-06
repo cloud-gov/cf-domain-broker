@@ -22,7 +22,7 @@ func (i *Iam) UploadCertificate(name, path string, cert acme.CertificateResource
 		CertificateBody:       aws.String(string(cert.Certificate)),
 		PrivateKey:            aws.String(string(cert.PrivateKey)),
 		ServerCertificateName: aws.String(name),
-		Path: aws.String(path),
+		Path:                  aws.String(path),
 	})
 	if err != nil {
 		return "", "", err

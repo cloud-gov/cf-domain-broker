@@ -7,8 +7,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 
 	"github.com/xenolf/lego/acme"
-
-	"github.com/18F/cf-cdn-service-broker/config"
 )
 
 func (i *Iam) UploadCertificate(name string, cert acme.CertificateResource) (string, error) {
@@ -16,7 +14,7 @@ func (i *Iam) UploadCertificate(name string, cert acme.CertificateResource) (str
 		CertificateBody:       aws.String(string(cert.Certificate)),
 		PrivateKey:            aws.String(string(cert.PrivateKey)),
 		ServerCertificateName: aws.String(name),
-		Path: aws.String(fmt.Sprintf("/cloudfront/%s/", i.Settings.IamPathPrefix)),
+		Path:                  aws.String(fmt.Sprintf("/cloudfront/%s/", i.Settings.IamPathPrefix)),
 	})
 	if err != nil {
 		return "", err

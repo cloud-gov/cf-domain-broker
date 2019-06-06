@@ -8,7 +8,6 @@ import (
 	_ "github.com/lib/pq"
 )
 
-
 func NewSettings() (Settings, error) {
 	var settings Settings
 	err := envconfig.Process("cdn", &settings)

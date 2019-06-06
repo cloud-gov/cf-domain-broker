@@ -8,8 +8,8 @@ image_resource:
     tag: "1.10"
 
 inputs:
-- name: broker-src
-  path: gopath/src/github.com/18F/cf-cdn-service-broker
+  - name: broker-src
+    path: gopath/src/github.com/18F/cf-cdn-service-broker
 
 run:
   path: gopath/src/github.com/18F/cf-cdn-service-broker/ci/run-tests.sh

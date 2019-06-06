@@ -1,13 +1,13 @@
 package types
 
 import (
-	"github.com/aws/aws-sdk-go/service/cloudfront"
-	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/aws/aws-sdk-go/service/cloudfront/cloudfrontiface"
+	"github.com/aws/aws-sdk-go/service/iam/iamiface"
 )
 
-type Distribution struct {
+type CloudfrontDistribution struct {
 	Settings Settings
-	Service  *cloudfront.CloudFront
+	Service  cloudfrontiface.CloudFrontAPI
 }
 
 type ALBProxy struct {
@@ -16,7 +16,7 @@ type ALBProxy struct {
 	ListenerARN string
 }
 
-type IamSettings struct {
+type IAM struct {
 	Settings Settings
-	Service  *iam.IAM
+	Service  iamiface.IAMAPI
 }

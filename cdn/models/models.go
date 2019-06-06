@@ -379,8 +379,8 @@ func (m *RouteManager) stillActive(r *Route) error {
 	})
 
 	lsession.Info("starting-canary-check", lager.Data{
-		"route":    r,
-		"settings": m.settings,
+		"route":       r,
+		"settings":    m.settings,
 		"instance-id": r.InstanceId,
 	})
 

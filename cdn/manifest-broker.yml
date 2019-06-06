@@ -1,8 +1,8 @@
 ---
 inherit: manifest-base.yml
 applications:
-- name: cdn-broker
-  command: cdn-broker
-  env:
-    GO_INSTALL_PACKAGE_SPEC: "./cmd/cdn-broker"
-    GOPACKAGENAME: "github.com/18F/cf-cdn-service-broker"
+  - name: cdn-broker
+    command: cdn-broker
+    env:
+      GO_INSTALL_PACKAGE_SPEC: "./cmd/cdn-broker"
+      GOPACKAGENAME: "github.com/18F/cf-cdn-service-broker"

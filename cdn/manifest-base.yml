@@ -2,6 +2,6 @@
 buildpack: go_buildpack
 memory: 128M
 services:
-- rds-cdn-broker
+  - rds-cdn-broker
 env:
   GOVERSION: go1.10

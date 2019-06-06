@@ -5,15 +5,16 @@ import (
 	"github.com/18f/cf-domain-broker/types"
 )
 
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 . RouteManager
 type RouteManager interface {
-	Create(instanceId, domain, origin, path string, insecureOrigin bool, forwardedHeaders types.Headers, forwardCookies bool, tags map[string]string) (*models.Route, error)
-	Update(instanceId string, domain, origin string, path string, insecureOrigin bool, forwardedHeaders types.Headers, forwardCookies bool) error
-	Get(instanceId string) (*models.Route, error)
-	Poll(route *models.Route) error
-	Disable(route *models.Route) error
-	Renew(route *models.Route) error
+	Create(instanceId string, domainOpts types.DomainPlanOptions, cdnOpts types.CdnPlanOptions, tags map[string]string) (*models.DomainRoute, error)
+	Update(instanceId string, domainOpts types.DomainPlanOptions, cdnOpts types.CdnPlanOptions) error
+	Get(instanceId string) (*models.DomainRoute, error)
+	Poll(route *models.DomainRoute) error
+	Disable(route *models.DomainRoute) error
+	Renew(route *models.DomainRoute) error
 	RenewAll()
 	DeleteOrphanedCerts()
-	GetDNSInstructions(route *models.Route) ([]string, error)
+	GetDNSInstructions(route *models.DomainRoute) ([]string, error)
 	Populate() error
 }

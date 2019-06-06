@@ -5,10 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/cloudfront"
-
-	"github.com/18F/cf-cdn-service-broker/config"
 )
-
 
 func (d *Distribution) getAliases(domains []string) *cloudfront.Aliases {
 	var items []*string

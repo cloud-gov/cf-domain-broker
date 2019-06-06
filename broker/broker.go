@@ -1,15 +1,198 @@
 package broker
 
 import (
-	"github.com/18f/cf-domain-broker/interfaces"
+	"code.cloudfoundry.org/lager"
+	"context"
+	"encoding/json"
+	"errors"
+	cfdomainbroker "github.com/18f/cf-domain-broker"
+	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/cloudfoundry-community/go-cfclient"
-	"github.com/sirupsen/logrus"
+	"github.com/pivotal-cf/brokerapi/domain"
+	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
 )
 
 type DomainBroker struct {
-	manager  interfaces.RouteManager
-	cfclient cfclient.Client
-	settings types.Settings
-	logger   logrus.Logger
+	Manager  routes.RouteManager
+	Cf       *cfclient.Client
+	Settings types.Settings
+	logger   lager.Logger
+}
+
+// Get the list of plans and service the broker has to offer.
+func (d *DomainBroker) Services(ctx context.Context) ([]domain.Service, error) {
+
+	logSession := d.logger.Session("get-services")
+	logSession.Info("get-services")
+
+	return []domain.Service{
+		{
+			ID:          cfdomainbroker.DomainServiceId,
+			Name:        cfdomainbroker.DomainServiceName,
+			Description: cfdomainbroker.DomainServiceDescription,
+			Bindable:    true,
+			Plans:       d.servicePlans(),
+			Metadata: &domain.ServiceMetadata{
+				DisplayName:         cfdomainbroker.DomainServiceMetadataDisplayName,
+				LongDescription:     cfdomainbroker.DomainServiceMetadataLongDescription,
+				DocumentationUrl:    cfdomainbroker.DomainServiceMetadataDocumentationUrl,
+				SupportUrl:          cfdomainbroker.DomainServiceMetadataSupportUrl,
+				ImageUrl:            cfdomainbroker.DomainServiceMetadataImageUrl,
+				ProviderDisplayName: cfdomainbroker.DomainServiceMetadataProviderDisplayName,
+			},
+			Tags: []string{
+				"cloud.gov",
+				"cdn",
+				"custom",
+				"domains",
+				"aws",
+			},
+		},
+	}, nil
+}
+
+func (d *DomainBroker) servicePlans() []domain.ServicePlan {
+	plans := make([]domain.ServicePlan, 0)
+
+	plans = append(plans, domain.ServicePlan{
+		ID:          cfdomainbroker.CDNPlanId,
+		Name:        cfdomainbroker.CDNPlanName,
+		Description: "This plan provides a custom domain name with CDN services through AWS Cloudfront.",
+		Metadata: &domain.ServicePlanMetadata{
+			// todo (mxplusb): make sure these cover the points we care about.
+			Bullets: []string{
+				"Each deployment will create an AWS Cloudfront instance on your behalf",
+				"Creates and maintains a Let's Encrypt SSL certificate for your custom domain.",
+				"Check your ATO to ensure you can use AWS Cloudfront",
+			},
+			DisplayName: "Custom-Domain-With-CDN",
+		},
+	})
+
+	plans = append(plans, domain.ServicePlan{
+		ID:          cfdomainbroker.DomainPlanId,
+		Name:        cfdomainbroker.DomainPlanName,
+		Description: "This plan provides a custom domain name for your application.",
+		Metadata: &domain.ServicePlanMetadata{
+			// todo (mxplusb): make sure these cover the points we care about.
+			Bullets: []string{
+				"Creates and maintains a Let's Encrypt SSL certificate for your custom domain.",
+				"Does not create a CDN service for you.",
+			},
+			DisplayName: "Custom-Domain",
+		},
+	})
+
+	return plans
+}
+
+func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details domain.ProvisionDetails, asyncAllowed bool) (domain.ProvisionedServiceSpec, error) {
+	spec := domain.ProvisionedServiceSpec{}
+
+	// generate a new session.
+	logSession := d.logger.Session("provision", lager.Data{
+		"instance-id":   instanceID,
+		"async-request": asyncAllowed,
+	})
+
+	// todo (mxplusb): search for existing
+	// logSession.Info("does-preexist")
+
+	if !asyncAllowed {
+		logSession.Error("async-required", apiresponses.ErrAsyncRequired)
+		return spec, apiresponses.ErrAsyncRequired
+	}
+
+	// check to make sure it's a supported plan.
+	planId := ""
+	for _, plan := range d.servicePlans() {
+		if plan.ID == details.PlanID {
+			planId = plan.ID
+		}
+	}
+
+	// if not, throw.
+	if planId == "" {
+		err := errors.New("plan_id not recognized")
+		logSession.Error("plan-not-found", err)
+		return spec, err
+	}
+
+	// figure out the payload and assign.
+	var domOpts types.DomainPlanOptions
+	var cdnOpts types.CdnPlanOptions
+
+	switch planId {
+	case cfdomainbroker.CDNPlanId:
+		if err := json.Unmarshal(details.GetRawParameters(), &cdnOpts); err != nil {
+			logSession.Error("unmarshal-cdn-opts", err)
+			return spec, err
+		}
+	case cfdomainbroker.DomainPlanId:
+		if err := json.Unmarshal(details.GetRawParameters(), &domOpts); err != nil {
+			logSession.Error("unmarshal-domain-opts", err)
+			return spec, err
+		}
+	}
+
+	resp, err := d.Manager.Get(instanceID)
+	if resp != nil {
+		return spec, apiresponses.ErrInstanceAlreadyExists
+	}
+
+	tags := map[string]string{
+		"Organization": details.OrganizationGUID,
+		"Space":        details.SpaceGUID,
+		"Service":      details.ServiceID,
+		"Plan":         details.PlanID,
+	}
+
+	_, err = d.Manager.Create(instanceID, domOpts, cdnOpts, tags)
+	if err != nil {
+		return spec, err
+	}
+
+	return domain.ProvisionedServiceSpec{IsAsync: true}, nil
+}
+
+func (*DomainBroker) Deprovision(ctx context.Context, instanceID string, details domain.DeprovisionDetails, asyncAllowed bool) (domain.DeprovisionServiceSpec, error) {
+	panic("implement me")
+}
+
+func (*DomainBroker) GetInstance(ctx context.Context, instanceID string) (domain.GetInstanceDetailsSpec, error) {
+	panic("implement me")
+}
+
+func (*DomainBroker) Update(ctx context.Context, instanceID string, details domain.UpdateDetails, asyncAllowed bool) (domain.UpdateServiceSpec, error) {
+	panic("implement me")
+}
+
+func (*DomainBroker) LastOperation(ctx context.Context, instanceID string, details domain.PollDetails) (domain.LastOperation, error) {
+	panic("implement me")
+}
+
+func (*DomainBroker) Bind(ctx context.Context, instanceID, bindingID string, details domain.BindDetails, asyncAllowed bool) (domain.Binding, error) {
+	panic("implement me")
+}
+
+func (*DomainBroker) Unbind(ctx context.Context, instanceID, bindingID string, details domain.UnbindDetails, asyncAllowed bool) (domain.UnbindSpec, error) {
+	panic("implement me")
+}
+
+func (*DomainBroker) GetBinding(ctx context.Context, instanceID, bindingID string) (domain.GetBindingSpec, error) {
+	panic("implement me")
+}
+
+func (*DomainBroker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
+	panic("implement me")
+}
+
+func NewDomainBroker(mgr routes.RouteManager, client *cfclient.Client, settings types.Settings, logger lager.Logger) *DomainBroker {
+	return &DomainBroker{
+		Manager:  mgr,
+		Cf:       client,
+		Settings: settings,
+		logger:   logger.Session("route-Manager"),
+	}
 }

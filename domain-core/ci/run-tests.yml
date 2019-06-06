@@ -8,8 +8,8 @@ image_resource:
     tag: "1.10"
 
 inputs:
-- name: broker-src
-  path: gopath/src/github.com/18F/cf-domain-broker-alb
+  - name: broker-src
+    path: gopath/src/github.com/18F/cf-domain-broker-alb
 
 run:
   path: gopath/src/github.com/18F/cf-domain-broker-alb/ci/run-tests.sh
