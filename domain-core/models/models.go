@@ -588,7 +588,7 @@ func (m *RouteManager) Destroy(guid string) error {
 	fmt.Sprintf("%s")
 	db, err := gorm.Open("postgres")
 	if errs := db.Model(route).Related(&certRow, "Certificate").GetErrors(); len(errs) > 0 {
-		for i := 0; i <len(errs); i++ {
+		for i := 0; i < len(errs); i++ {
 			if gorm.IsRecordNotFoundError(errs[i]) {
 				// this error is record not found.
 			} else {

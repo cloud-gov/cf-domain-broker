@@ -11,13 +11,13 @@ import (
 	"github.com/cloudfoundry-community/go-cfclient"
 	"github.com/pivotal-cf/brokerapi/domain"
 	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
+	"net/http"
 )
 
 type DomainBroker struct {
-	Manager  routes.RouteManager
-	Cf       *cfclient.Client
-	Settings types.Settings
-	logger   lager.Logger
+	Manager routes.RouteManager
+	Cf      *cfclient.Client
+	logger  lager.Logger
 }
 
 // Get the list of plans and service the broker has to offer.
@@ -161,7 +161,7 @@ func (*DomainBroker) Deprovision(ctx context.Context, instanceID string, details
 }
 
 func (*DomainBroker) GetInstance(ctx context.Context, instanceID string) (domain.GetInstanceDetailsSpec, error) {
-	panic("implement me")
+	return domain.GetInstanceDetailsSpec{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
 func (*DomainBroker) Update(ctx context.Context, instanceID string, details domain.UpdateDetails, asyncAllowed bool) (domain.UpdateServiceSpec, error) {
@@ -188,11 +188,10 @@ func (*DomainBroker) LastBindingOperation(ctx context.Context, instanceID, bindi
 	panic("implement me")
 }
 
-func NewDomainBroker(mgr routes.RouteManager, client *cfclient.Client, settings types.Settings, logger lager.Logger) *DomainBroker {
+func NewDomainBroker(mgr routes.RouteManager, client *cfclient.Client, logger lager.Logger) *DomainBroker {
 	return &DomainBroker{
-		Manager:  mgr,
-		Cf:       client,
-		Settings: settings,
-		logger:   logger.Session("route-Manager"),
+		Manager: mgr,
+		Cf:      client,
+		logger:  logger.Session("route-Manager"),
 	}
 }

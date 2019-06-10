@@ -4,7 +4,7 @@ import (
 	"code.cloudfoundry.org/lager"
 	"context"
 	"database/sql"
-	cfdomainbrokerfakes "github.com/18f/cf-domain-broker/cf-domain-brokerfakes"
+	"github.com/18f/cf-domain-broker/fakes"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
@@ -63,21 +63,21 @@ func (s *BrokerSuite) SetupSuite() {
 	rms := loggerSession.Session("route-manager")
 	s.Manager = routes.RouteManager{
 		Logger:     rms,
-		Iam:        types.IAM{Settings: settings, Service: new(cfdomainbrokerfakes.FakeIAMAPI)},
-		CloudFront: types.CloudfrontDistribution{Settings: settings, Service: new(cfdomainbrokerfakes.FakeCloudFrontAPI)},
-		ElbSvc:     new(cfdomainbrokerfakes.FakeELBV2API),
+		Iam:        new(fakes.FakeIAMAPI),
+		CloudFront: new(fakes.FakeCloudFrontAPI),
+		ElbSvc:     new(fakes.FakeELBV2API),
 		Settings:   settings,
 		Db:         s.DB,
 	}
 
-	s.Broker = NewDomainBroker(s.Manager, s.Cf, settings, rms)
+	s.Broker = NewDomainBroker(s.Manager, s.Cf, rms)
 }
 
 func (s *BrokerSuite) TestDomainBroker_Services(t *testing.T) {
 	res, err := s.Broker.Services(context.Background())
 
 	assert.Nil(t, err)
-	assert.Equal(t, 1, len(res))          // one service.
+	assert.Equal(t, 1, len(res))          // one service
 	assert.Equal(t, 2, len(res[0].Plans)) //two plans
 }
 
