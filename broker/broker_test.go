@@ -63,8 +63,8 @@ func (s *BrokerSuite) SetupSuite() {
 	rms := loggerSession.Session("route-manager")
 	s.Manager = routes.RouteManager{
 		Logger:     rms,
-		Iam:        new(fakes.FakeIAMAPI),
-		CloudFront: new(fakes.FakeCloudFrontAPI),
+		IamSvc:        new(fakes.FakeIAMAPI),
+		CloudFrontSvc: new(fakes.FakeCloudFrontAPI),
 		ElbSvc:     new(fakes.FakeELBV2API),
 		Settings:   settings,
 		Db:         s.DB,

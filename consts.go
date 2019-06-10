@@ -1,5 +1,7 @@
 package cf_domain_broker
 
+import "time"
+
 const (
 	DomainServiceName = "Custom-Domain-Broker"
 	DomainServiceId   = "7428b169-f693-46c8-86bc-6dc8a8ea1361"
@@ -20,4 +22,14 @@ const (
 	DomainPlanId   = "5d4bcdef-efa1-4b0a-b658-7776c3438e4a"
 
 	MaxHeaderCount = 10
+
+	DomainCreateTimeout = time.Hour * 24
+	DomainCreateCheck = time.Minute * 3
+
+	Provisioning State = iota
+	Provisioned State = iota
+	Deprovisioning State = iota
+
 )
+
+type State int

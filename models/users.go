@@ -15,14 +15,14 @@ type UserData struct {
 	PrivateKey   crypto.PrivateKey
 }
 
-func (u *UserData) GetEmail() string {
+func (u UserData) GetEmail() string {
 	return u.Email
 }
 
-func (u *UserData) GetRegistration() *registration.Resource {
+func (u UserData) GetRegistration() *registration.Resource {
 	return u.Registration
 }
 
-func (u *UserData) GetPrivateKey() crypto.PrivateKey {
+func (u UserData) GetPrivateKey() crypto.PrivateKey {
 	return u.PrivateKey
 }

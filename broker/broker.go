@@ -91,16 +91,13 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	spec := domain.ProvisionedServiceSpec{}
 
 	// generate a new session.
-	logSession := d.logger.Session("provision", lager.Data{
+	lsession := d.logger.Session("provision", lager.Data{
 		"instance-id":   instanceID,
 		"async-request": asyncAllowed,
 	})
 
-	// todo (mxplusb): search for existing
-	// logSession.Info("does-preexist")
-
 	if !asyncAllowed {
-		logSession.Error("async-required", apiresponses.ErrAsyncRequired)
+		lsession.Error("async-required", apiresponses.ErrAsyncRequired)
 		return spec, apiresponses.ErrAsyncRequired
 	}
 
@@ -115,7 +112,7 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	// if not, throw.
 	if planId == "" {
 		err := errors.New("plan_id not recognized")
-		logSession.Error("plan-not-found", err)
+		lsession.Error("plan-not-found", err)
 		return spec, err
 	}
 
@@ -126,18 +123,24 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	switch planId {
 	case cfdomainbroker.CDNPlanId:
 		if err := json.Unmarshal(details.GetRawParameters(), &cdnOpts); err != nil {
-			logSession.Error("unmarshal-cdn-opts", err)
+			lsession.Error("unmarshal-cdn-opts", err)
 			return spec, err
 		}
 	case cfdomainbroker.DomainPlanId:
 		if err := json.Unmarshal(details.GetRawParameters(), &domOpts); err != nil {
-			logSession.Error("unmarshal-domain-opts", err)
+			lsession.Error("unmarshal-domain-opts", err)
 			return spec, err
 		}
 	}
+	lsession.Info("creating ")
 
 	resp, err := d.Manager.Get(instanceID)
-	if resp != nil {
+	if err != nil {
+		lsession.Error("route-manager-get-instance", err)
+		return spec, apiresponses.ErrInstanceAlreadyExists
+	}
+	if resp.InstanceId == instanceID {
+		lsession.Info("duplicate-instances")
 		return spec, apiresponses.ErrInstanceAlreadyExists
 	}
 
@@ -150,6 +153,7 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 
 	_, err = d.Manager.Create(instanceID, domOpts, cdnOpts, tags)
 	if err != nil {
+		lsession.Error("route-manager-create-instance", err)
 		return spec, err
 	}
 
@@ -168,24 +172,37 @@ func (*DomainBroker) Update(ctx context.Context, instanceID string, details doma
 	panic("implement me")
 }
 
-func (*DomainBroker) LastOperation(ctx context.Context, instanceID string, details domain.PollDetails) (domain.LastOperation, error) {
-	panic("implement me")
+func (d *DomainBroker) LastOperation(ctx context.Context, instanceID string, details domain.PollDetails) (domain.LastOperation, error) {
+	lastOp := domain.LastOperation{}
+
+	lsession := d.logger.Session("last-operation", lager.Data{
+		"instance-id": instanceID,
+	})
+
+	r, err := d.Manager.Get(instanceID)
+	if err != nil {
+		lsession.Error("route-manager-get", err)
+		return lastOp, err
+	}
+
+
+	lastOp.Description = r.DNSChallenge.String()
 }
 
 func (*DomainBroker) Bind(ctx context.Context, instanceID, bindingID string, details domain.BindDetails, asyncAllowed bool) (domain.Binding, error) {
-	panic("implement me")
+	return domain.Binding{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
 func (*DomainBroker) Unbind(ctx context.Context, instanceID, bindingID string, details domain.UnbindDetails, asyncAllowed bool) (domain.UnbindSpec, error) {
-	panic("implement me")
+	return domain.UnbindSpec{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
 func (*DomainBroker) GetBinding(ctx context.Context, instanceID, bindingID string) (domain.GetBindingSpec, error) {
-	panic("implement me")
+	return domain.GetBindingSpec{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
 func (*DomainBroker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
-	panic("implement me")
+	return domain.LastOperation{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
 func NewDomainBroker(mgr routes.RouteManager, client *cfclient.Client, logger lager.Logger) *DomainBroker {

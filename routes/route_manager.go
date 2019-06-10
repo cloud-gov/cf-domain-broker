@@ -5,7 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"database/sql"
+	"errors"
 	"fmt"
+	cf_domain_broker "github.com/18f/cf-domain-broker"
 	le_providers "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/types"
@@ -62,7 +65,23 @@ type elb struct {
 	certsOnListener int
 }
 
+func NewManager(logger lager.Logger, iam iamiface.IAMAPI, cloudFront cloudfrontiface.CloudFrontAPI, elbSvc elbv2iface.ELBV2API, settings types.Settings, db *gorm.DB) RouteManager {
+	return RouteManager{
+		Logger:        logger,
+		IamSvc:        iam,
+		CloudFrontSvc: cloudFront,
+		Settings:      settings,
+		Db:            db,
+		ElbSvc:        elbSvc,
+		Dns: le_providers.ServiceBrokerDNSProvider{
+			Handler: make(chan le_providers.DomainMessenger, 10),
+			Db: db,
+		},
+	}
+}
+
 // Create a new custom domain.
+// todo (mxplusb): add hook for creating a CDN instance.
 func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOptions, cdnOpts types.CdnPlanOptions, tags map[string]string) (*models.DomainRoute, error) {
 	lsession := r.Logger.Session("create-route", lager.Data{
 		"instance-id": instanceId,
@@ -86,7 +105,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	acmeClient, err := lego.NewClient(lego.NewConfig(&user))
 	if err != nil {
 		lsession.Error("acme-new-client", err)
-		return &models.DomainRoute{}, nil
+		return &models.DomainRoute{}, err
 	}
 	lsession.Debug("acme-client-instantiated")
 
@@ -155,9 +174,16 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		// return whichever one resolves.
 		return bfn(ifn(googleValidated) | ifn(cloudflareValdiated)), nil
 	})); err != nil {
-		return &models.DomainRoute{}, nil
+		return &models.DomainRoute{}, err
 	}
 	lsession.Debug("acme-dns-provider-assigned")
+
+	// create the route struct and add the user reference.
+	localRoute := &models.DomainRoute{
+		InstanceId: instanceId,
+		State: cf_domain_broker.Provisioning,
+		User: user,
+	}
 
 	// register our user resource.
 	reg, err := acmeClient.Registration.Register(registration.RegisterOptions{
@@ -166,9 +192,10 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	user.Registration = reg
 	lsession.Debug("acme-user-registered")
 
-	// create the route struct and add the user reference.
-	localRoute := &models.DomainRoute{
-		User: user,
+	// store the certificate and elb info the database.
+	if err := r.Db.Save(localRoute).Error; err != nil {
+		lsession.Error("db-save-route", err)
+		return &models.DomainRoute{}, err
 	}
 
 	// make the certificate request.
@@ -181,7 +208,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	cert, err := acmeClient.Certificate.Obtain(request)
 	if err != nil {
 		lsession.Error("acme-certificate-obtain", err)
-		return &models.DomainRoute{}, nil
+		return &models.DomainRoute{}, err
 	}
 	localRoute.Certificate = cert
 	lsession.Info("certificate-obtained")
@@ -211,7 +238,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	certArn, err := r.IamSvc.UploadServerCertificate(certUploadInput)
 	if err != nil {
 		lsession.Error("iam-upload-server-certificate", err)
-		return &models.DomainRoute{}, nil
+		return &models.DomainRoute{}, err
 	}
 	lsession.Info("certificate-uploaded-to-iam")
 
@@ -251,9 +278,12 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		},
 	}); err != nil {
 		lsession.Error("elbsvc-add-listener-certificates", err)
-		return &models.DomainRoute{}, nil
+		return &models.DomainRoute{}, err
 	}
 	lsession.Info("certificate-uploaded-to-elb")
+
+	// since it's been uploaded to the elb, it's done.
+	localRoute.State = cf_domain_broker.Provisioned
 
 	// store the certificate and elb info the database.
 	if err := r.Db.Save(localRoute).Error; err != nil {
@@ -264,12 +294,25 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	return localRoute, nil
 }
 
+// Update is not supported yet.
 func (*RouteManager) Update(instanceId string, domainOpts types.DomainPlanOptions, cdnOpts types.CdnPlanOptions) error {
-	panic("implement me")
+	return nil
 }
 
-func (*RouteManager) Get(instanceId string) (*models.DomainRoute, error) {
-	panic("implement me")
+// Get the instance by it's instance ID.
+func (r *RouteManager) Get(instanceId string) (models.DomainRoute, error) {
+	lsession := r.Logger.Session("get-instance", lager.Data{
+		"instance-id": instanceId,
+	})
+
+	var localRoute models.DomainRoute
+	if err := r.Db.Find(&localRoute, &models.DomainRoute{InstanceId: instanceId}).Error; err != nil {
+		lsession.Error("db-find-instance-id", err)
+		return models.DomainRoute{}, err
+	}
+	lsession.Info("found-instance")
+
+	return localRoute, nil
 }
 
 func (*RouteManager) Poll(route *models.DomainRoute) error {
@@ -284,16 +327,70 @@ func (*RouteManager) Renew(route *models.DomainRoute) error {
 	panic("implement me")
 }
 
-func (*RouteManager) RenewAll() {
-	panic("implement me")
+func (r *RouteManager) RenewAll() {
+	lsession := r.Logger.Session("renew-all")
+
+	rows, err := r.scanner(models.DomainRoute{})
+	if err != nil {
+		lsession.Error("scanner-error", err)
+	}
+
+	// for every row
+	for rows.Next() {
+
+		// search for the certificate or skip from errors.
+		var localRoute models.DomainRoute
+		if err := r.Db.ScanRows(rows, &localRoute); err != nil {
+			lsession.Error("db-scan-rows", err)
+			continue
+		}
+
+		// generate a client or skip from errors.
+		acmeClient, err := lego.NewClient(lego.NewConfig(localRoute.User))
+		if err != nil {
+			lsession.Error("acme-new-client", err)
+			 continue
+		}
+
+		// renew the cert or skip from errors.
+		newCert, err := acmeClient.Certificate.Renew(*localRoute.Certificate, true, false)
+		if err != nil {
+			lsession.Error("acme-renew-certificate", err)
+			continue
+		}
+		localRoute.Certificate = newCert
+
+		if err := r.Db.Save(localRoute).Error; err != nil {
+			lsession.Error("db-save", err)
+		}
+	}
 }
 
 func (*RouteManager) DeleteOrphanedCerts() {
 	panic("implement me")
 }
 
-func (*RouteManager) GetDNSInstructions(route *models.DomainRoute) ([]string, error) {
-	panic("implement me")
+// GetDNSInstructions gets the stored DNS instructions from a given
+func (r *RouteManager) GetDNSInstructions(route *models.DomainRoute) (le_providers.DomainMessenger, error) {
+	lsession := r.Logger.Session("get-dns-instructions", lager.Data{
+		"instance-id": route.InstanceId,
+	})
+
+	var domainMessage le_providers.DomainMessenger
+	if errs := r.Db.Where("domain like ?", route.DomainExternal).First(&domainMessage).GetErrors(); len(errs) > 0 {
+		var errStrs []string
+		for idx := range errs {
+			errStrs = append(errStrs, errs[idx].Error())
+		}
+		err := errors.New(strings.Join(errStrs, ","))
+		lsession.Error("db-like-domain", err, lager.Data{
+			"external-domain": route.DomainExternal,
+			"internal-domain": route.DomainInternal,
+		})
+	}
+	lsession.Info("found-domain-token")
+
+	return domainMessage, nil
 }
 
 func (*RouteManager) Populate() error {
@@ -338,16 +435,11 @@ func (r *RouteManager) UpdateElbs() {
 	}
 }
 
-func NewManager(logger lager.Logger, iam iamiface.IAMAPI, cloudFront cloudfrontiface.CloudFrontAPI, elbSvc elbv2iface.ELBV2API, settings types.Settings, db *gorm.DB) RouteManager {
-	return RouteManager{
-		Logger:        logger,
-		IamSvc:        iam,
-		CloudFrontSvc: cloudFront,
-		Settings:      settings,
-		Db:            db,
-		ElbSvc:        elbSvc,
-		Dns: le_providers.ServiceBrokerDNSProvider{
-			Handler: make(chan le_providers.DomainMessenger, 1),
-		},
+// Grabs all rows from a given model.
+func (r *RouteManager) scanner(model interface{}) (*sql.Rows, error) {
+	rows, err := r.Db.Model(&model).Where("instance_id = *").Select("*").Rows()
+	if err != nil {
+		return nil, nil
 	}
+	return rows, nil
 }
