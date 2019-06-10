@@ -26,6 +26,7 @@ import (
 )
 
 // RouteManager is the worker for managing custom domains.
+// todo (mxplusb): add rate limiter to prevent rate limiting issues with ACME.
 type RouteManager struct {
 	// Internal database.
 	Db *gorm.DB
@@ -45,14 +46,14 @@ type RouteManager struct {
 	// AWS ELBv2
 	ElbSvc elbv2iface.ELBV2API
 
+	// dns challenger
+	Dns le_providers.ServiceBrokerDNSProvider
+
 	// list of available ELBs
 	elbs []*elb
 
 	// locker
 	locker sync.RWMutex
-
-	// dns challenger
-	dns le_providers.ServiceBrokerDNSProvider
 }
 
 // internal holder for needed information about an elb to prevent nested round trips.
@@ -91,7 +92,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 
 	// set the DNS challenger, and create our resolvers.
 	// todo (mxplusb): move this into it's own package.
-	if err := acmeClient.Challenge.SetDNS01Provider(r.dns, dns01.WrapPreCheck(func(domain, fqdn, value string, check dns01.PreCheckFunc) (b bool, e error) {
+	if err := acmeClient.Challenge.SetDNS01Provider(r.Dns, dns01.WrapPreCheck(func(domain, fqdn, value string, check dns01.PreCheckFunc) (b bool, e error) {
 		ctx := context.Background()
 
 		// if either dns servers resolves the record, it will be set to true.
@@ -345,7 +346,7 @@ func NewManager(logger lager.Logger, iam iamiface.IAMAPI, cloudFront cloudfronti
 		Settings:      settings,
 		Db:            db,
 		ElbSvc:        elbSvc,
-		dns: le_providers.ServiceBrokerDNSProvider{
+		Dns: le_providers.ServiceBrokerDNSProvider{
 			Handler: make(chan le_providers.DomainMessenger, 1),
 		},
 	}
