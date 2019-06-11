@@ -11,8 +11,8 @@ type UserData struct {
 	Id           string `gorm:"primary_key"`
 	Email        string `gorm:"not null"`
 	Registration *registration.Resource
-	PublicKey    crypto.PublicKey
-	PrivateKey   crypto.PrivateKey
+	PublicKey    crypto.PublicKey `gorm:"type:varchar"`
+	PrivateKey   crypto.PrivateKey `gorm:"type:varchar"`
 }
 
 func (u UserData) GetEmail() string {

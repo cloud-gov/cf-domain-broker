@@ -20,13 +20,13 @@ require (
 	github.com/aws/aws-sdk-go v1.13.0
 	github.com/cenkalti/backoff v2.1.1+incompatible // indirect
 	github.com/cloudflare/cloudflare-go v0.9.1 // indirect
-	github.com/cloudfoundry-community/go-cfclient v0.0.0-20190607211135-1e7eef4174e4
+	github.com/cloudfoundry-community/go-cfclient v0.0.0-20190611131856-16c98753d315
 	github.com/cpu/goacmedns v0.0.1 // indirect
 	github.com/decker502/dnspod-go v0.2.0 // indirect
 	github.com/dnsimple/dnsimple-go v0.23.0 // indirect
 	github.com/exoscale/egoscale v0.18.1 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
-	github.com/go-acme/lego v2.6.0+incompatible // indirect
+	github.com/go-acme/lego v2.6.0+incompatible
 	github.com/go-errors/errors v1.0.1 // indirect
 	github.com/go-ini/ini v1.42.0 // indirect
 	github.com/golang/mock v1.3.1 // indirect
@@ -37,13 +37,14 @@ require (
 	github.com/google/uuid v1.1.1 // indirect
 	github.com/gophercloud/gophercloud v0.1.0 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20190430165422-3e4dfb77656c // indirect
+	github.com/gorilla/mux v1.7.2 // indirect
 	github.com/iij/doapi v0.0.0-20190504054126-0bbf12d6d7df // indirect
 	github.com/jinzhu/gorm v1.9.8
 	github.com/jmcarp/lego v0.3.2-0.20170424160445-b4deb96f1082
 	github.com/juju/ratelimit v1.0.1 // indirect
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/kolo/xmlrpc v0.0.0-20190514182600-74b23a09d7ea // indirect
-	github.com/kr/pty v1.1.4 // indirect
+	github.com/kr/pty v1.1.5 // indirect
 	github.com/labbsr0x/bindman-dns-webhook v1.0.0 // indirect
 	github.com/labbsr0x/goh v0.0.0-20190510171137-94bcf1cb07b7 // indirect
 	github.com/lib/pq v1.1.1
@@ -74,11 +75,11 @@ require (
 	go.opencensus.io v0.22.0 // indirect
 	golang.org/x/exp v0.0.0-20190510132918-efd6b22b2522 // indirect
 	golang.org/x/image v0.0.0-20190523035834-f03afa92d3ff // indirect
-	golang.org/x/mobile v0.0.0-20190509164839-32b2708ab171 // indirect
+	golang.org/x/mobile v0.0.0-20190607214518-6fa95d984e88 // indirect
 	golang.org/x/mod v0.1.0 // indirect
-	golang.org/x/net v0.0.0-20190607181551-461777fb6f67 // indirect
-	golang.org/x/sys v0.0.0-20190606203320-7fc4e5ec1444 // indirect
-	golang.org/x/tools v0.0.0-20190607200810-68211a626cca // indirect
+	golang.org/x/net v0.0.0-20190611141213-3f473d35a33a // indirect
+	golang.org/x/sys v0.0.0-20190610200419-93c9922d18ae // indirect
+	golang.org/x/tools v0.0.0-20190611154301-25a4f137592f // indirect
 	google.golang.org/appengine v1.6.1 // indirect
 	google.golang.org/genproto v0.0.0-20190605220351-eb0b1bdb6ae6 // indirect
 	google.golang.org/grpc v1.21.1 // indirect

@@ -187,6 +187,7 @@ func (d *DomainBroker) LastOperation(ctx context.Context, instanceID string, det
 
 
 	lastOp.Description = r.DNSChallenge.String()
+	return lastOp, nil
 }
 
 func (*DomainBroker) Bind(ctx context.Context, instanceID, bindingID string, details domain.BindDetails, asyncAllowed bool) (domain.Binding, error) {
@@ -205,10 +206,9 @@ func (*DomainBroker) LastBindingOperation(ctx context.Context, instanceID, bindi
 	return domain.LastOperation{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
-func NewDomainBroker(mgr routes.RouteManager, client *cfclient.Client, logger lager.Logger) *DomainBroker {
+func NewDomainBroker(mgr routes.RouteManager, logger lager.Logger) *DomainBroker {
 	return &DomainBroker{
 		Manager: mgr,
-		Cf:      client,
 		logger:  logger.Session("route-Manager"),
 	}
 }
