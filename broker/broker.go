@@ -89,6 +89,7 @@ func (d *DomainBroker) servicePlans() []domain.ServicePlan {
 
 func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details domain.ProvisionDetails, asyncAllowed bool) (domain.ProvisionedServiceSpec, error) {
 	spec := domain.ProvisionedServiceSpec{}
+	spec.IsAsync = asyncAllowed
 
 	// generate a new session.
 	lsession := d.logger.Session("provision", lager.Data{
@@ -134,10 +135,11 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	}
 	lsession.Info("creating ")
 
+	// check for duplicates.
 	resp, err := d.Manager.Get(instanceID)
 	if err != nil {
 		lsession.Error("route-manager-get-instance", err)
-		return spec, apiresponses.ErrInstanceAlreadyExists
+		return spec, apiresponses.NewFailureResponse(err, http.StatusInternalServerError, "route not found")
 	}
 	if resp.InstanceId == instanceID {
 		lsession.Info("duplicate-instances")

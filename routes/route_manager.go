@@ -1,13 +1,18 @@
 package routes
 
 import (
-	"code.cloudfoundry.org/lager"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+
+	"code.cloudfoundry.org/lager"
 	cf_domain_broker "github.com/18f/cf-domain-broker"
 	le_providers "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
@@ -23,9 +28,6 @@ import (
 	"github.com/go-acme/lego/lego"
 	"github.com/go-acme/lego/registration"
 	"github.com/jinzhu/gorm"
-	"net"
-	"strings"
-	"sync"
 )
 
 // RouteManager is the worker for managing custom domains.
@@ -52,6 +54,9 @@ type RouteManager struct {
 	// dns challenger
 	Dns le_providers.ServiceBrokerDNSProvider
 
+	// ACME Client, used mostly for testing.
+	AcmeHttpClient *http.Client
+
 	// list of available ELBs
 	elbs []*elb
 
@@ -75,7 +80,7 @@ func NewManager(logger lager.Logger, iam iamiface.IAMAPI, cloudFront cloudfronti
 		ElbSvc:        elbSvc,
 		Dns: le_providers.ServiceBrokerDNSProvider{
 			Handler: make(chan le_providers.DomainMessenger, 10),
-			Db: db,
+			Db:      db,
 		},
 	}
 }
@@ -102,7 +107,16 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		PublicKey:  key.Public(),
 		PrivateKey: key,
 	}
-	acmeClient, err := lego.NewClient(lego.NewConfig(&user))
+
+	conf := lego.NewConfig(&user)
+	conf.CADirURL = r.Settings.AcmeUrl
+
+	// if the pointer doesn't contain a nil reference, use the client the route manager has configured.
+	if r.AcmeHttpClient != nil {
+		conf.HTTPClient = r.AcmeHttpClient
+	}
+
+	acmeClient, err := lego.NewClient(conf)
 	if err != nil {
 		lsession.Error("acme-new-client", err)
 		return &models.DomainRoute{}, err
@@ -181,8 +195,8 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	// create the route struct and add the user reference.
 	localRoute := &models.DomainRoute{
 		InstanceId: instanceId,
-		State: cf_domain_broker.Provisioning,
-		User: user,
+		State:      cf_domain_broker.Provisioning,
+		User:       user,
 	}
 
 	// register our user resource.
@@ -307,6 +321,11 @@ func (r *RouteManager) Get(instanceId string) (models.DomainRoute, error) {
 
 	var localRoute models.DomainRoute
 	if err := r.Db.Find(&localRoute, &models.DomainRoute{InstanceId: instanceId}).Error; err != nil {
+		switch {
+		case gorm.IsRecordNotFoundError(err):
+			lsession.Error("db-record-not-found", err)
+			return models.DomainRoute{}, nil
+		}
 		lsession.Error("db-find-instance-id", err)
 		return models.DomainRoute{}, err
 	}
@@ -349,7 +368,7 @@ func (r *RouteManager) RenewAll() {
 		acmeClient, err := lego.NewClient(lego.NewConfig(localRoute.User))
 		if err != nil {
 			lsession.Error("acme-new-client", err)
-			 continue
+			continue
 		}
 
 		// renew the cert or skip from errors.

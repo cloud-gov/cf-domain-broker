@@ -28,7 +28,7 @@ require (
 	github.com/onsi/ginkgo v1.8.0 // indirect
 	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
-	github.com/pborman/uuid v1.2.0 // indirect
+	github.com/pborman/uuid v1.2.0
 	github.com/pivotal-cf/brokerapi v5.0.0+incompatible
 	github.com/robfig/cron v1.1.0
 	github.com/smartystreets/assertions v1.0.0 // indirect
