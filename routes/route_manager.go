@@ -1,13 +1,11 @@
 package routes
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"database/sql"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/iam/iamiface"
 	"github.com/go-acme/lego/certificate"
-	"github.com/go-acme/lego/challenge/dns01"
 	"github.com/go-acme/lego/lego"
 	"github.com/go-acme/lego/registration"
 	"github.com/jinzhu/gorm"
@@ -39,7 +36,7 @@ type RouteManager struct {
 	// Inherited from main.
 	Logger lager.Logger
 
-	// Global settings from the environemnt.
+	// Global settings from the environment.
 	Settings types.Settings
 
 	// AWS IAM.
@@ -57,6 +54,9 @@ type RouteManager struct {
 	// ACME Client, used mostly for testing.
 	AcmeHttpClient *http.Client
 
+	// DNS Resolvers
+	Resolvers map[string]string
+
 	// list of available ELBs
 	elbs []*elb
 
@@ -70,6 +70,7 @@ type elb struct {
 	certsOnListener int
 }
 
+// todo (mxplusb): prolly test this before the broker code.
 func NewManager(logger lager.Logger, iam iamiface.IAMAPI, cloudFront cloudfrontiface.CloudFrontAPI, elbSvc elbv2iface.ELBV2API, settings types.Settings, db *gorm.DB) RouteManager {
 	return RouteManager{
 		Logger:        logger,
@@ -111,85 +112,13 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	conf := lego.NewConfig(&user)
 	conf.CADirURL = r.Settings.AcmeUrl
 
-	// if the pointer doesn't contain a nil reference, use the client the route manager has configured.
-	if r.AcmeHttpClient != nil {
-		conf.HTTPClient = r.AcmeHttpClient
-	}
-
-	acmeClient, err := lego.NewClient(conf)
+	acmeClient, err := le_providers.NewAcmeClient(nil, r.Resolvers, conf, r.Dns, r.Logger)
 	if err != nil {
 		lsession.Error("acme-new-client", err)
 		return &models.DomainRoute{}, err
 	}
 	lsession.Debug("acme-client-instantiated")
 
-	// set the DNS challenger, and create our resolvers.
-	// todo (mxplusb): move this into it's own package.
-	if err := acmeClient.Challenge.SetDNS01Provider(r.Dns, dns01.WrapPreCheck(func(domain, fqdn, value string, check dns01.PreCheckFunc) (b bool, e error) {
-		ctx := context.Background()
-
-		// if either dns servers resolves the record, it will be set to true.
-		var googleValidated = false
-		var cloudflareValdiated = false
-
-		// create a DNS resolver which pokes google's public DNS address.
-		googleResolver := net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (conn net.Conn, e error) {
-				d := net.Dialer{}
-				return d.DialContext(ctx, "udp", "8.8.8.8:53")
-			},
-		}
-		gval, err := googleResolver.LookupTXT(ctx, fqdn)
-		if err != nil {
-			return false, err
-		}
-		for idx := range gval {
-			if gval[idx] == value {
-				googleValidated = true
-			}
-		}
-
-		// create a DNS resolver which pokes cloudflare's public DNS address.
-		cloudflareResolver := net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (conn net.Conn, e error) {
-				d := net.Dialer{}
-				return d.DialContext(ctx, "udp", "1.1.1.1:53")
-			},
-		}
-		cval, err := cloudflareResolver.LookupTXT(ctx, fqdn)
-		if err != nil {
-			return false, err
-		}
-		for idx := range gval {
-			if cval[idx] == value {
-				cloudflareValdiated = true
-			}
-		}
-
-		// true == 1 and false == 0 as helper functions because go doesn't support bitwise xor on booleans.
-		// we need these so we can return `true | false`, depending on whichever resolves first.
-		ifn := func(b bool) int {
-			if b {
-				return 1
-			} else {
-				return 0
-			}
-		}
-		bfn := func(i int) bool {
-			if i == 0 {
-				return false
-			} else {
-				return true
-			}
-		}
-
-		// return whichever one resolves.
-		return bfn(ifn(googleValidated) | ifn(cloudflareValdiated)), nil
-	})); err != nil {
-		return &models.DomainRoute{}, err
-	}
 	lsession.Debug("acme-dns-provider-assigned")
 
 	// create the route struct and add the user reference.
@@ -200,7 +129,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	}
 
 	// register our user resource.
-	reg, err := acmeClient.Registration.Register(registration.RegisterOptions{
+	reg, err := acmeClient.Client.Registration.Register(registration.RegisterOptions{
 		TermsOfServiceAgreed: true,
 	})
 	user.Registration = reg
@@ -219,7 +148,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	}
 
 	// get the certificate.
-	cert, err := acmeClient.Certificate.Obtain(request)
+	cert, err := acmeClient.Client.Certificate.Obtain(request)
 	if err != nil {
 		lsession.Error("acme-certificate-obtain", err)
 		return &models.DomainRoute{}, err

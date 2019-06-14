@@ -61,15 +61,19 @@ func (s *BrokerSuite) SetupSuite() {
 		s.Error(err)
 	}
 
+	resolvers := make(map[string]string)
+	resolvers["localhost"] = fmt.Sprintf("localhost:%d", s.Gravel.DnsPort)
+
 	rms := loggerSession.Session("route-manager")
 	s.Manager = routes.RouteManager{
-		Logger:        rms,
-		IamSvc:        new(fakes.FakeIAMAPI),
-		CloudFrontSvc: new(fakes.FakeCloudFrontAPI),
-		ElbSvc:        new(fakes.FakeELBV2API),
-		Settings:      settings,
-		Db:            s.DB,
+		Logger:         rms,
+		IamSvc:         new(fakes.FakeIAMAPI),
+		CloudFrontSvc:  new(fakes.FakeCloudFrontAPI),
+		ElbSvc:         new(fakes.FakeELBV2API),
+		Settings:       settings,
+		Db:             s.DB,
 		AcmeHttpClient: s.Gravel.Client,
+		Resolvers:      resolvers,
 	}
 
 	s.Broker = NewDomainBroker(s.Manager, rms)

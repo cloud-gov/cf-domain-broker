@@ -108,9 +108,13 @@ type GravelHarness struct {
 	HttpPort      int
 	HttpsPort     int
 	ListenAddress string
-	DnsPort       int
-	TestRecords   map[string]string
-	Client        *http.Client
+
+	// Reserved:
+	//   53: localhost
+	//   5353: mDNS on macos
+	DnsPort     int
+	TestRecords map[string]string
+	Client      *http.Client
 
 	t      *testing.T
 	logger *log.Logger
@@ -127,7 +131,7 @@ func NewGravelHarness(t *testing.T) *GravelHarness {
 		HttpPort:      5001,
 		HttpsPort:     5002,
 		ListenAddress: "localhost:14000",
-		DnsPort:       5353,
+		DnsPort:       54,
 		TestRecords:   make(map[string]string),
 		PublicKey:     []byte(cert),
 		PrivateKey:    []byte(key),
@@ -150,10 +154,10 @@ func NewGravelHarness(t *testing.T) *GravelHarness {
 	}
 
 	// start pebble and wait for it to boot.
-	t.Log("booting pebble")
+	t.Log("booting gravel")
 	go gh.startPebble()
 	time.Sleep(time.Second * 3)
-	t.Log("pebble booted")
+	t.Log("gravel booted")
 
 	// add our certs into the client pool.
 	rootCAs, _ := x509.SystemCertPool()
@@ -179,7 +183,7 @@ func NewGravelHarness(t *testing.T) *GravelHarness {
 			TLSHandshakeTimeout:   15 * time.Second,
 			ResponseHeaderTimeout: 15 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
-			TLSClientConfig: tlsConf,
+			TLSClientConfig:       tlsConf,
 		},
 	}
 
@@ -226,11 +230,9 @@ func (g *GravelHarness) buildDnsTestServer() {
 	dns.HandleFunc("service.", g.handleDnsRequest)
 
 	// start server
-	port := 5353
-	server := &dns.Server{Addr: ":" + strconv.Itoa(port), Net: "udp"}
-	g.t.Logf("starting dns at %d\n", port)
+	server := &dns.Server{Addr: ":" + strconv.Itoa(g.DnsPort), Net: "udp"}
+	g.t.Logf("starting dns at %d\n", g.DnsPort)
 	err := server.ListenAndServe()
-	defer server.Shutdown()
 	if err != nil {
 		g.t.Errorf("failed to start dns server: %s\n ", err.Error())
 		g.t.FailNow()

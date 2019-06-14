@@ -139,6 +139,7 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	resp, err := d.Manager.Get(instanceID)
 	if err != nil {
 		lsession.Error("route-manager-get-instance", err)
+		// todo (mxplusb): make it not throw this error.
 		return spec, apiresponses.NewFailureResponse(err, http.StatusInternalServerError, "route not found")
 	}
 	if resp.InstanceId == instanceID {
