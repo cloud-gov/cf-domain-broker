@@ -2,16 +2,17 @@ package models
 
 import (
 	"crypto"
-	"github.com/go-acme/lego/registration"
+
+	"github.com/go-acme/lego/v3/registration"
 	"github.com/jinzhu/gorm"
 )
 
 type UserData struct {
 	gorm.Model
-	Id           string `gorm:"primary_key"`
+	UserId       string `gorm:"primary_key"`
 	Email        string `gorm:"not null"`
 	Registration *registration.Resource
-	PublicKey    crypto.PublicKey `gorm:"type:varchar"`
+	PublicKey    crypto.PublicKey  `gorm:"type:varchar"`
 	PrivateKey   crypto.PrivateKey `gorm:"type:varchar"`
 }
 

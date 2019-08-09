@@ -1,9 +1,9 @@
 package models
 
 import (
-	cf_domain_broker "github.com/18f/cf-domain-broker"
-	le_providers "github.com/18f/cf-domain-broker/le-providers"
-	"github.com/go-acme/lego/certificate"
+	cfdomainbroker "github.com/18f/cf-domain-broker"
+	leproviders "github.com/18f/cf-domain-broker/le-providers"
+	"github.com/go-acme/lego/v3/certificate"
 	"github.com/jinzhu/gorm"
 )
 
@@ -14,13 +14,13 @@ type DomainRoute struct {
 	InstanceId string `gorm:"not null;unique_index;primary_key"`
 
 	// Instance status
-	State cf_domain_broker.State
+	State cfdomainbroker.State
 
 	// Our user data.
 	User UserData `gorm:"not null" gorm:"foreignkey:UserRef"`
 
 	// The DNS challenge data.
-	DNSChallenge le_providers.DomainMessenger
+	DNSChallenge leproviders.DomainMessenger
 
 	// Our certificate.
 	Certificate *certificate.Resource `gorm:"foreignkey:CertRef"`
@@ -34,7 +34,7 @@ type DomainRoute struct {
 	DomainExternal string
 	DomainInternal string
 
-	// Cloudfront Distribution Id.
+	// Cloudfront Distribution UserId.
 	DistributionId string
 	Origin         string
 	Path           string

@@ -3,16 +3,20 @@ package broker
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"testing"
 
 	"code.cloudfoundry.org/lager"
-	cf_domain_broker "github.com/18f/cf-domain-broker"
+	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/fakes"
-	"github.com/18f/cf-domain-broker/gravel"
+	leproviders "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
+	"github.com/18f/gravel"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/sqlite"
 	"github.com/pborman/uuid"
@@ -29,11 +33,11 @@ func TestBrokerSuite(t *testing.T) {
 type BrokerSuite struct {
 	suite.Suite
 	Broker   *DomainBroker
-	Manager  routes.RouteManager
+	Manager  *routes.RouteManager
 	Settings types.Settings
 
 	DB     *gorm.DB
-	Gravel *gravel.GravelHarness
+	Gravel *gravel.Gravel
 
 	logger lager.Logger
 }
@@ -46,10 +50,21 @@ func (s *BrokerSuite) SetupSuite() {
 	s.Require().NoError(err)
 
 	// set up the gravel test harness.
-	s.Gravel = gravel.NewGravelHarness(s.T())
+	gravelOpts := gravel.NewDefaultGravelOpts()
+
+	internalResolver := fmt.Sprintf("localhost:%d", gravelOpts.DnsOpts.DnsPort)
+
+	gravelOpts.VAOpts.CustomResolverAddress = internalResolver
+	gravelOpts.AutoUpdateAuthZRecords = true // enable to just give us the certificate.
+	s.Gravel, err = gravel.New(gravelOpts)
+	s.Require().NoError(err)
+
+	// start the servers
+	go s.Gravel.StartDnsServer()
+	go s.Gravel.StartWebServer()
 
 	settings := types.Settings{}
-	settings.AcmeUrl = fmt.Sprintf("https://%s/dir", s.Gravel.ListenAddress)
+	settings.AcmeUrl = fmt.Sprintf("https://%s%s", s.Gravel.Opts.ListenAddress, s.Gravel.Opts.WfeOpts.DirectoryPath)
 
 	// set up our test writers.
 	testSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
@@ -57,26 +72,52 @@ func (s *BrokerSuite) SetupSuite() {
 	logger.RegisterSink(testSink)
 	loggerSession := logger.Session("test-suite")
 
-	if err := s.DB.AutoMigrate(&models.DomainRoute{}, &models.UserData{}).Error; err != nil {
-		s.Error(err)
+	// migrate our DB to set up the schema.
+	if err := s.DB.AutoMigrate(&models.DomainRoute{}, &models.UserData{}, &leproviders.DomainMessenger{}).Error; err != nil {
+		s.Require().NoError(err)
 	}
 
 	resolvers := make(map[string]string)
-	resolvers["localhost"] = fmt.Sprintf("localhost:%d", s.Gravel.DnsPort)
+	resolvers["localhost"] = internalResolver
 
-	rms := loggerSession.Session("route-manager")
-	s.Manager = routes.RouteManager{
-		Logger:         rms,
-		IamSvc:         new(fakes.FakeIAMAPI),
-		CloudFrontSvc:  new(fakes.FakeCloudFrontAPI),
-		ElbSvc:         new(fakes.FakeELBV2API),
-		Settings:       settings,
-		Db:             s.DB,
-		AcmeHttpClient: s.Gravel.Client,
-		Resolvers:      resolvers,
+	// set up our fakes. we need to create an elb so there's something the route manager can query for.
+	elbSvc := fakes.NewMockELBV2API()
+	iamSvc := fakes.NewMockIAMAPI()
+	cloudfrontSvc := new(fakes.FakeCloudFrontAPI)
+
+	// create 5 ELBs, and a random number (<= 25) of listeners on each to ensure there's some variety in it, so we can
+	// ensure the least assigned logic works.
+	for idx := 0; idx < 5; idx++ {
+		elbString := fmt.Sprintf("test-elb-%d", idx)
+		elbResp, _ := elbSvc.CreateLoadBalancer(&elbv2.CreateLoadBalancerInput{
+			Name: aws.String(elbString),
+		})
+		for nidx := 0; nidx < rand.Intn(25); nidx++ {
+			_, _ = elbSvc.CreateListener(&elbv2.CreateListenerInput{
+				DefaultActions: []*elbv2.Action{{}},
+				LoadBalancerArn: elbResp.LoadBalancers[0].LoadBalancerArn,
+				Port:         aws.Int64(443),
+				Protocol:     aws.String("HTTPS"),
+				Certificates: make([]*elbv2.Certificate, rand.Intn(25)),
+			})
+		}
 	}
 
-	s.Broker = NewDomainBroker(s.Manager, rms)
+	trmLogger := loggerSession.Session("test-route-manager")
+
+	s.Manager, err = routes.NewManager(
+		trmLogger,
+		iamSvc,
+		cloudfrontSvc,
+		elbSvc,
+		settings,
+		s.DB,
+		s.Gravel.Opts.DnsOpts.Provider,
+		s.Gravel.Client,
+		map[string]string{"localhost": fmt.Sprintf("localhost:%d", s.Gravel.Opts.DnsOpts.DnsPort)})
+	s.Require().NoError(err)
+
+	s.Broker = NewDomainBroker(s.Manager, trmLogger)
 }
 
 func (s *BrokerSuite) TestDomainBroker_Provision() {
@@ -88,8 +129,8 @@ func (s *BrokerSuite) TestDomainBroker_Provision() {
 
 	// test the domain plan.
 	d := domain.ProvisionDetails{
-		PlanID:        cf_domain_broker.DomainPlanId,
-		RawParameters: []byte(`{"domains": ["test.service"]}`),
+		PlanID:        cfdomainbroker.DomainPlanId,
+		RawParameters: []byte(fmt.Sprintf(`{"domains": ["%s"]}`, "test.service")),
 	}
 
 	res, err := b.Provision(context.Background(), serviceInstanceId, d, true)

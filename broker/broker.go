@@ -1,21 +1,22 @@
 package broker
 
 import (
-	"code.cloudfoundry.org/lager"
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+
+	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/cloudfoundry-community/go-cfclient"
 	"github.com/pivotal-cf/brokerapi/domain"
 	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
-	"net/http"
 )
 
 type DomainBroker struct {
-	Manager routes.RouteManager
+	Manager *routes.RouteManager
 	Cf      *cfclient.Client
 	logger  lager.Logger
 }
@@ -133,12 +134,14 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 			return spec, err
 		}
 	}
-	lsession.Info("creating ")
+	lsession.Info("creating new service instance.", lager.Data{
+		"plan-id": planId,
+	})
 
 	// check for duplicates.
 	resp, err := d.Manager.Get(instanceID)
 	if err != nil {
-		lsession.Error("route-manager-get-instance", err)
+		lsession.Error("get-instance", err)
 		// todo (mxplusb): make it not throw this error.
 		return spec, apiresponses.NewFailureResponse(err, http.StatusInternalServerError, "route not found")
 	}
@@ -156,7 +159,9 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 
 	_, err = d.Manager.Create(instanceID, domOpts, cdnOpts, tags)
 	if err != nil {
-		lsession.Error("route-manager-create-instance", err)
+		lsession.Error("create-instance", err, lager.Data{
+			"tags": tags,
+		})
 		return spec, err
 	}
 
@@ -188,7 +193,6 @@ func (d *DomainBroker) LastOperation(ctx context.Context, instanceID string, det
 		return lastOp, err
 	}
 
-
 	lastOp.Description = r.DNSChallenge.String()
 	return lastOp, nil
 }
@@ -209,7 +213,7 @@ func (*DomainBroker) LastBindingOperation(ctx context.Context, instanceID, bindi
 	return domain.LastOperation{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
-func NewDomainBroker(mgr routes.RouteManager, logger lager.Logger) *DomainBroker {
+func NewDomainBroker(mgr *routes.RouteManager, logger lager.Logger) *DomainBroker {
 	return &DomainBroker{
 		Manager: mgr,
 		logger:  logger.Session("route-Manager"),

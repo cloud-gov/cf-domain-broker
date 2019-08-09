@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"sync"
 
-	cfclient "github.com/cloudfoundry-community/go-cfclient"
+	"github.com/cloudfoundry-community/go-cfclient"
 )
 
 type FakeCloudFoundryClient struct {
@@ -3312,7 +3312,7 @@ type FakeCloudFoundryClient struct {
 		result1 cfclient.UserProvidedServiceInstance
 		result2 error
 	}
-	invocations      map[string][][]interface{}
+	invocations map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
 

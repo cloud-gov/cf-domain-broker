@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"code.cloudfoundry.org/lager"
-	"github.com/go-acme/lego/lego"
-	"github.com/go-acme/lego/registration"
+	"github.com/go-acme/lego/v3/lego"
+	"github.com/go-acme/lego/v3/registration"
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/suite"
 )
@@ -22,7 +22,7 @@ type ClientSuite struct {
 	suite.Suite
 
 	logger lager.Logger
-	user *testUser
+	user   *testUser
 }
 
 type testUser struct {
@@ -30,7 +30,7 @@ type testUser struct {
 	Id           string `gorm:"primary_key"`
 	Email        string `gorm:"not null"`
 	Registration *registration.Resource
-	PublicKey    crypto.PublicKey `gorm:"type:varchar"`
+	PublicKey    crypto.PublicKey  `gorm:"type:varchar"`
 	PrivateKey   crypto.PrivateKey `gorm:"type:varchar"`
 }
 
@@ -87,5 +87,5 @@ func (s *ClientSuite) TestNewAcmeClientWithHttpClient() {
 	}
 
 	s.Require().NoError(err)
-	s.Require().NotNil(a.HttpClient)
+	s.Require().NotNil(a.Client)
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+
 	"github.com/18f/cf-domain-broker/broker"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/routes"
@@ -11,7 +13,6 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/pivotal-cf/brokerapi"
-	"net/http"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"

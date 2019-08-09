@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	cf_domain_broker "github.com/18f/cf-domain-broker"
+	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/jinzhu/gorm"
 )
 
@@ -23,11 +23,12 @@ type ServiceBrokerDNSProvider struct {
 
 // Set our default timeout to be 24 hours and check every 3 minutes.
 func (s ServiceBrokerDNSProvider) Timeout() (timeout, interval time.Duration) {
-	return cf_domain_broker.DomainCreateTimeout, cf_domain_broker.DomainCreateCheck
+	return cfdomainbroker.DomainCreateTimeout, cfdomainbroker.DomainCreateCheck
 }
 
 // Wrapper for storing the DNS instructions.
 type DomainMessenger struct {
+	gorm.Model
 	Domain  string
 	Token   string
 	KeyAuth string
@@ -56,11 +57,11 @@ func (d DomainMessenger) String() string {
 
 // Present our credentials to the handler.
 func (s ServiceBrokerDNSProvider) Present(domain, token, keyAuth string) error {
-	if err := s.Db.Create(DomainMessenger{
+	if err := s.Db.Create(&DomainMessenger{
 		Domain:     domain,
 		Token:      token,
 		KeyAuth:    keyAuth,
-		ValidUntil: time.Now().Add(cf_domain_broker.DomainCreateTimeout),
+		ValidUntil: time.Now().Add(cfdomainbroker.DomainCreateTimeout),
 	}).Error; err != nil {
 		return err
 	}

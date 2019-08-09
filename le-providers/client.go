@@ -1,14 +1,13 @@
 package le_providers
 
 import (
-	"context"
-	"net"
 	"net/http"
 
 	"code.cloudfoundry.org/lager"
-	"github.com/go-acme/lego/challenge/dns01"
-	"github.com/go-acme/lego/lego"
-	"github.com/xenolf/lego/challenge"
+	"github.com/go-acme/lego/v3/challenge"
+	"github.com/go-acme/lego/v3/challenge/dns01"
+	"github.com/go-acme/lego/v3/lego"
+	"github.com/miekg/dns"
 )
 
 // Implementation and helper struct for working with custom ACME resources.
@@ -16,7 +15,7 @@ type AcmeClient struct {
 	Client      *lego.Client
 	Resolvers   map[string]string
 	DNSProvider challenge.Provider
-	HttpClient  *http.Client
+	AcmeConfig  *lego.Config
 
 	logger lager.Logger
 }
@@ -25,16 +24,13 @@ type AcmeClient struct {
 func NewAcmeClient(client *http.Client, resolvers map[string]string, config *lego.Config, provider challenge.Provider, logger lager.Logger) (*AcmeClient, error) {
 	a := &AcmeClient{
 		Resolvers:  resolvers,
-		HttpClient: client,
+		AcmeConfig:config,
 		logger: logger.Session("acme-client", lager.Data{
 			"resolvers": resolvers,
 		}),
 	}
 
-	// if the pointer doesn't contain a nil reference, use the client provided.
-	if client != nil {
-		config.HTTPClient = client
-	}
+	a.AcmeConfig.HTTPClient = client
 
 	a.logger.Debug("instantiating-new-acme-client")
 
@@ -45,7 +41,18 @@ func NewAcmeClient(client *http.Client, resolvers map[string]string, config *leg
 		return &AcmeClient{}, err
 	}
 
-	if err = a.Client.Challenge.SetDNS01Provider(provider, dns01.WrapPreCheck(a.preCheck)); err != nil {
+	// add the nameserver resolvers to the dns provider.
+	var nameservers []string
+	for k, _ := range resolvers {
+		nameservers = append(nameservers, resolvers[k])
+	}
+	a.logger.Debug("using-nameservers", lager.Data{
+		"nameservers": nameservers,
+	})
+
+
+
+	if err = a.Client.Challenge.SetDNS01Provider(provider, dns01.AddRecursiveNameservers(nameservers), dns01.WrapPreCheck(a.preCheck)); err != nil {
 		a.logger.Error("acme-client-challenge-set-dns01-provider", err)
 		return &AcmeClient{}, err
 	}
@@ -57,54 +64,55 @@ func NewAcmeClient(client *http.Client, resolvers map[string]string, config *leg
 
 func (a *AcmeClient) preCheck(domain, fqdn, value string, check dns01.PreCheckFunc) (b bool, e error) {
 	lsession := a.logger.Session("dns-pre-check")
-	ctx := context.Background()
 
-	var state = false
 	var resolverStates []bool
 	for localProvider, localAddress := range a.Resolvers {
 		llsession := lsession.Session("provider-check", lager.Data{
 			"target": localProvider,
 			"host":   localAddress,
+			"record": fqdn,
 		})
 		llsession.Debug("building-resolver")
 
-		// create a DNS resolver for the map item.
-		localResolver := net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (conn net.Conn, e error) {
-				d := net.Dialer{}
-				return d.DialContext(ctx, "udp", localAddress)
-			},
-		}
+		dnsClient := dns.Client{}
+		msg := &dns.Msg{}
+		msg.SetQuestion(fqdn, dns.TypeTXT)
 
-		// look up the txt record.
-		val, err := localResolver.LookupTXT(ctx, fqdn)
+		reply, _, err := dnsClient.Exchange(msg, localAddress)
 		if err != nil {
-			llsession.Error("resolver-failure", err)
+			llsession.Error("dns-exchange-error", err)
 			return false, err
 		}
 
-		// if the txt record resolves as intended, mark this resolver as true.
-		for idx := range val {
-			if val[idx] == value {
-				llsession.Debug("found-target-txt-record", lager.Data{
-					"txt": val[idx],
-				})
-				resolverStates = append(resolverStates, true)
+		// nil check, skip if not resolving.
+		if len(reply.Answer) == 0 {
+			llsession.Debug("no-answer-from-dns")
+			continue
+		}
+
+		if t, ok := reply.Answer[0].(*dns.TXT); ok {
+			// if the txt record resolves as intended, mark this resolver as true.
+			for idx := range t.Txt {
+				if t.Txt[idx] == value {
+					llsession.Debug("found-target-txt-record", lager.Data{
+						"txt": t.Txt[idx],
+					})
+					resolverStates = append(resolverStates, true)
+				}
 			}
 		}
 	}
 
 	// true == 1 and false == 0 as helper functions because go doesn't support bitwise xor on booleans.
 	// we need these so we can return `true | false`, depending on whichever resolves first.
-	ifn := func(b bool) int {
+	itobfn := func(b bool) int {
 		if b {
 			return 1
 		} else {
 			return 0
 		}
 	}
-	bfn := func(i int) bool {
+	btoifn := func(i int) bool {
 		if i == 0 {
 			return false
 		} else {
@@ -113,9 +121,12 @@ func (a *AcmeClient) preCheck(domain, fqdn, value string, check dns01.PreCheckFu
 	}
 
 	lsession.Debug("checking-resolver-state")
+
+	var state = false
+
 	// for every resolver, if any resolver returns positive, we can resolve this record.
 	for idx := range resolverStates {
-		if bfn(ifn(resolverStates[idx]) | ifn(state)) {
+		if btoifn(itobfn(resolverStates[idx]) | itobfn(state)) {
 			state = true
 		}
 	}
