@@ -3,7 +3,6 @@ package models
 import (
 	cfdomainbroker "github.com/18f/cf-domain-broker"
 	leproviders "github.com/18f/cf-domain-broker/le-providers"
-	"github.com/go-acme/lego/v3/certificate"
 	"github.com/jinzhu/gorm"
 )
 
@@ -23,7 +22,7 @@ type DomainRoute struct {
 	DNSChallenge leproviders.DomainMessenger
 
 	// Our certificate.
-	Certificate *certificate.Resource `gorm:"foreignkey:CertRef"`
+	Certificate *Certificate `gorm:"foreignkey:CertRef"`
 
 	// The ELB the route is tied to.
 	ELBArn string
@@ -31,7 +30,8 @@ type DomainRoute struct {
 	// The listener the certificate is tied to.
 	ListenerArn string
 
-	DomainExternal string
+	// DomainExternal is a slice of Domains because lots of DBs don't like array types.
+	DomainExternal []Domain `gorm:"foreignkey:domains"`
 	DomainInternal string
 
 	// Cloudfront Distribution UserId.
@@ -40,4 +40,10 @@ type DomainRoute struct {
 	Path           string
 	InsecureOrigin bool
 	ALBProxyARN    string
+}
+
+// Domain is an instance of a domain.
+type Domain struct {
+	gorm.Model
+	Value string
 }

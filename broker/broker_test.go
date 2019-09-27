@@ -54,8 +54,8 @@ func (s *BrokerSuite) SetupSuite() {
 
 	internalResolver := fmt.Sprintf("localhost:%d", gravelOpts.DnsOpts.DnsPort)
 
-	gravelOpts.VAOpts.CustomResolverAddress = internalResolver
-	gravelOpts.AutoUpdateAuthZRecords = true // enable to just give us the certificate.
+	gravelOpts.VAOpts.CustomResolverAddress = internalResolver // allows gravel to verify itself.
+	gravelOpts.AutoUpdateAuthZRecords = true                   // enable to just give us the certificate.
 	s.Gravel, err = gravel.New(gravelOpts)
 	s.Require().NoError(err)
 
@@ -65,6 +65,7 @@ func (s *BrokerSuite) SetupSuite() {
 
 	settings := types.Settings{}
 	settings.AcmeUrl = fmt.Sprintf("https://%s%s", s.Gravel.Opts.ListenAddress, s.Gravel.Opts.WfeOpts.DirectoryPath)
+	settings.Email = "cloud-gov-operations@gsa.gov"
 
 	// set up our test writers.
 	testSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
@@ -73,9 +74,10 @@ func (s *BrokerSuite) SetupSuite() {
 	loggerSession := logger.Session("test-suite")
 
 	// migrate our DB to set up the schema.
-	if err := s.DB.AutoMigrate(&models.DomainRoute{}, &models.UserData{}, &leproviders.DomainMessenger{}).Error; err != nil {
+	if err := s.DB.AutoMigrate(&models.DomainRoute{}, &models.UserData{}, &models.Domain{}, &models.Certificate{},&leproviders.DomainMessenger{}).Error; err != nil {
 		s.Require().NoError(err)
 	}
+	s.DB.SetLogger(s.Gravel.Logger) // use the gravel logger because lager.Logger doesn't have `Print`
 
 	resolvers := make(map[string]string)
 	resolvers["localhost"] = internalResolver
@@ -94,11 +96,11 @@ func (s *BrokerSuite) SetupSuite() {
 		})
 		for nidx := 0; nidx < rand.Intn(25); nidx++ {
 			_, _ = elbSvc.CreateListener(&elbv2.CreateListenerInput{
-				DefaultActions: []*elbv2.Action{{}},
+				DefaultActions:  []*elbv2.Action{{}},
 				LoadBalancerArn: elbResp.LoadBalancers[0].LoadBalancerArn,
-				Port:         aws.Int64(443),
-				Protocol:     aws.String("HTTPS"),
-				Certificates: make([]*elbv2.Certificate, rand.Intn(25)),
+				Port:            aws.Int64(443),
+				Protocol:        aws.String("HTTPS"),
+				Certificates:    make([]*elbv2.Certificate, rand.Intn(25)),
 			})
 		}
 	}
@@ -120,7 +122,7 @@ func (s *BrokerSuite) SetupSuite() {
 	s.Broker = NewDomainBroker(s.Manager, trmLogger)
 }
 
-func (s *BrokerSuite) TestDomainBroker_Provision() {
+func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlan() {
 	b := s.Broker
 
 	var (
@@ -130,16 +132,31 @@ func (s *BrokerSuite) TestDomainBroker_Provision() {
 	// test the domain plan.
 	d := domain.ProvisionDetails{
 		PlanID:        cfdomainbroker.DomainPlanId,
-		RawParameters: []byte(fmt.Sprintf(`{"domains": ["%s"]}`, "test.service")),
+		RawParameters: []byte(fmt.Sprintf(`{"domains": [{"value": "%s"}]}`, "test.service")),
 	}
 
 	res, err := b.Provision(context.Background(), serviceInstanceId, d, true)
 	if err != nil {
-		s.Error(err, "provisioning is throwing an error")
+		s.Require().NoError(err, "provisioning should not throw an error")
+	}
+	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
+
+	var verifyRoute models.DomainRoute
+	if err := s.DB.Find(&verifyRoute, &models.DomainRoute{InstanceId: serviceInstanceId}).Error; err != nil {
+		s.Require().NoError(err, "there should be no error querying for the domain route")
 	}
 
-	s.Require().NoError(err, "expected no error on provision")
-	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
+	s.Require().NotNil(verifyRoute, "the route must not be empty")
+
+	var localCert models.Certificate
+	if err := s.DB.Model(&verifyRoute).Related(&localCert).Error; err != nil {
+		s.Require().NoError(err, "there should be no error when searching for the related certificate")
+	}
+
+	s.Require().EqualValues(serviceInstanceId, verifyRoute.InstanceId, "service instance id must match deployed service instance")
+	s.Require().EqualValues(cfdomainbroker.Provisioned, verifyRoute.State, "state must be provisioned")
+	s.Require().NotNil(verifyRoute.Certificate, "certificate result must not be nil")
+	s.Require().NotEmpty(verifyRoute.Certificate.Resource.Certificate, "certificate must not be empty")
 }
 
 func (s *BrokerSuite) TestDomainBroker_Services() {

@@ -25,5 +25,6 @@ require (
 	github.com/smartystreets/assertions v1.0.0 // indirect
 	github.com/stretchr/objx v0.2.0 // indirect
 	github.com/stretchr/testify v1.3.0
+	github.com/xenolf/lego v2.7.2+incompatible // indirect
 	google.golang.org/appengine v1.6.1 // indirect
 )

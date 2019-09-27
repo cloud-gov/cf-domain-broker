@@ -15,7 +15,6 @@ import (
 	leproviders "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/types"
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/cloudfront/cloudfrontiface"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
@@ -157,9 +156,11 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	lsession.Debug("acme-dns-provider-assigned")
 	// create the route struct and add the user reference.
 	localRoute := &models.DomainRoute{
-		InstanceId: instanceId,
-		State:      cfdomainbroker.Provisioning,
-		User:       user,
+		InstanceId:     instanceId,
+		State:          cfdomainbroker.Provisioning,
+		User:           user,
+		DomainExternal: domainOpts.Domains,
+		Certificate: &models.Certificate{},
 	}
 
 	// register our user resource.
@@ -170,15 +171,28 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	lsession.Debug("acme-user-registered")
 
 	// store the certificate and elb info the database.
-	if err := r.Db.Save(localRoute).Error; err != nil {
-		lsession.Error("db-save-route", err)
-		return &models.DomainRoute{}, err
+	// check for debug.
+	if r.Settings.LogLevel == 1 {
+		if err := r.Db.Debug().Create(localRoute).Error; err != nil {
+			lsession.Error("db-debug-save-route", err)
+			return &models.DomainRoute{}, err
+		}
+	} else {
+		if err := r.Db.Create(localRoute).Error; err != nil {
+			lsession.Error("db-save-route", err)
+			return &models.DomainRoute{}, err
+		}
 	}
 	lsession.Info("db-route-saved")
 
+	var domains []string
+	for i := 0; i < len(domainOpts.Domains); i++ {
+		domains = append(domains, domainOpts.Domains[i].Value)
+	}
+
 	// make the certificate request.
 	request := certificate.ObtainRequest{
-		Domains: domainOpts.Domains,
+		Domains: domains,
 		Bundle:  true,
 	}
 
@@ -188,7 +202,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		lsession.Error("acme-certificate-obtain", err)
 		return &models.DomainRoute{}, err
 	}
-	localRoute.Certificate = cert
+	localRoute.Certificate.Resource = cert
 	lsession.Info("certificate-obtained")
 
 	// find the least assigned ELB to assign the route to.
@@ -209,8 +223,8 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 
 	// generate the necessary input.
 	certUploadInput := &iam.UploadServerCertificateInput{}
-	certUploadInput.SetCertificateBody(string(localRoute.Certificate.Certificate))
-	certUploadInput.SetPrivateKey(string(localRoute.Certificate.PrivateKey))
+	certUploadInput.SetCertificateBody(string(localRoute.Certificate.Resource.Certificate))
+	certUploadInput.SetPrivateKey(string(localRoute.Certificate.Resource.PrivateKey))
 	certUploadInput.SetServerCertificateName(fmt.Sprintf("cf-domain-%s", instanceId))
 
 	// upload the certificate.
@@ -259,8 +273,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		ListenerArn: targetListenArn,
 		Certificates: []*elbv2.Certificate{
 			{
-				// I really hate the AWS string dereferencing to create a reference.
-				CertificateArn: aws.String(*certArn.ServerCertificateMetadata.Arn),
+				CertificateArn: certArn.ServerCertificateMetadata.Arn,
 			},
 		},
 	}); err != nil {
@@ -319,6 +332,7 @@ func (*RouteManager) Renew(route *models.DomainRoute) error {
 	panic("implement me")
 }
 
+// todo (mxplusb): make sure this actually does the thing
 func (r *RouteManager) RenewAll() {
 	lsession := r.Logger.Session("renew-all")
 
@@ -345,12 +359,12 @@ func (r *RouteManager) RenewAll() {
 		}
 
 		// renew the cert or skip from errors.
-		newCert, err := acmeClient.Certificate.Renew(*localRoute.Certificate, true, false)
+		newCert, err := acmeClient.Certificate.Renew(*localRoute.Certificate.Resource, true, false)
 		if err != nil {
 			lsession.Error("acme-renew-certificate", err)
 			continue
 		}
-		localRoute.Certificate = newCert
+		localRoute.Certificate.Resource = newCert
 
 		if err := r.Db.Save(localRoute).Error; err != nil {
 			lsession.Error("db-save", err)

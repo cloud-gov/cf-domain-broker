@@ -24,11 +24,11 @@ const (
 	MaxHeaderCount = 10
 
 	DomainCreateTimeout = time.Hour * 24
-	DomainCreateCheck   = time.Second * 10
+	DomainCreateCheck   = time.Second * 360
 
-	Provisioning   State = iota
-	Provisioned    State = iota
-	Deprovisioning State = iota
+	Provisioning   State = 0
+	Provisioned    State = 1
+	Deprovisioning State = 2
 )
 
 type State int

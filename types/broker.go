@@ -1,5 +1,9 @@
 package types
 
+import (
+	"github.com/18f/cf-domain-broker/models"
+)
+
 type CdnPlanOptions struct {
 	Domain         string   `json:"domain"`
 	Origin         string   `json:"origin"`
@@ -11,7 +15,7 @@ type CdnPlanOptions struct {
 }
 
 type DomainPlanOptions struct {
-	Domains []string `json:"domains"`
+	Domains []models.Domain `json:"domains"`
 }
 
 type Settings struct {

@@ -12,15 +12,15 @@ import (
 
 type MockELBV2API struct {
 	VpcId         string
-	loadBalancers []*elbv2.LoadBalancer
-	listeners     []*elbv2.Listener
+	LoadBalancers []*elbv2.LoadBalancer
+	Listeners     []*elbv2.Listener
 }
 
 func NewMockELBV2API() *MockELBV2API {
 	return &MockELBV2API{
 		VpcId:         fmt.Sprintf("test-vpc-%s", uuid.New()[len(uuid.New())-4:]),
-		loadBalancers: []*elbv2.LoadBalancer{},
-		listeners:     []*elbv2.Listener{},
+		LoadBalancers: []*elbv2.LoadBalancer{},
+		Listeners:     []*elbv2.Listener{},
 	}
 }
 
@@ -34,10 +34,10 @@ func (elb *MockELBV2API) Arner(name string) string {
 func (elb *MockELBV2API) AddListenerCertificates(input *elbv2.AddListenerCertificatesInput) (*elbv2.AddListenerCertificatesOutput, error) {
 	var lelb *elbv2.Listener = nil
 
-	for idx, _ := range elb.listeners {
-		if elb.listeners[idx].ListenerArn == input.ListenerArn {
-			elb.listeners[idx].Certificates = append(elb.listeners[idx].Certificates, input.Certificates...)
-			lelb = elb.listeners[idx]
+	for idx, _ := range elb.Listeners {
+		if elb.Listeners[idx].ListenerArn == input.ListenerArn {
+			elb.Listeners[idx].Certificates = append(elb.Listeners[idx].Certificates, input.Certificates...)
+			lelb = elb.Listeners[idx]
 		}
 	}
 
@@ -77,10 +77,10 @@ func (elb *MockELBV2API) CreateListener(input *elbv2.CreateListenerInput) (*elbv
 		SslPolicy:       input.SslPolicy,
 	}
 
-	elb.listeners = append(elb.listeners, llistener)
+	elb.Listeners = append(elb.Listeners, llistener)
 
 	return &elbv2.CreateListenerOutput{
-		Listeners: elb.listeners,
+		Listeners: elb.Listeners,
 	}, nil
 }
 
@@ -105,7 +105,7 @@ func (elb *MockELBV2API) CreateLoadBalancer(input *elbv2.CreateLoadBalancerInput
 		VpcId:             aws.String(elb.VpcId),
 	}
 
-	elb.loadBalancers = append(elb.loadBalancers, lelb)
+	elb.LoadBalancers = append(elb.LoadBalancers, lelb)
 
 	return &elbv2.CreateLoadBalancerOutput{
 		LoadBalancers: []*elbv2.LoadBalancer{lelb},
@@ -233,9 +233,9 @@ func (elb *MockELBV2API) DescribeListeners(input *elbv2.DescribeListenersInput) 
 
 	// if we're looking for specific arns
 	if input.LoadBalancerArn != nil {
-		for idx, _ := range elb.listeners {
-			if elb.listeners[idx].LoadBalancerArn == input.LoadBalancerArn {
-				listeners = append(listeners, elb.listeners[idx])
+		for idx, _ := range elb.Listeners {
+			if elb.Listeners[idx].LoadBalancerArn == input.LoadBalancerArn {
+				listeners = append(listeners, elb.Listeners[idx])
 			}
 		}
 
@@ -244,7 +244,7 @@ func (elb *MockELBV2API) DescribeListeners(input *elbv2.DescribeListenersInput) 
 		}, nil
 	} else { // otherwise just return all.
 		return &elbv2.DescribeListenersOutput{
-			Listeners: elb.listeners,
+			Listeners: elb.Listeners,
 		}, nil
 	}
 }
@@ -283,9 +283,9 @@ func (elb *MockELBV2API) DescribeLoadBalancers(input *elbv2.DescribeLoadBalancer
 	// if we're looking for specific arns
 	if len(input.LoadBalancerArns) > 0 {
 		for idx, _ := range input.LoadBalancerArns {
-			for nidx, _ := range elb.loadBalancers {
-				if elb.loadBalancers[nidx].LoadBalancerArn == input.LoadBalancerArns[idx] {
-					loadBalancers = append(loadBalancers, elb.loadBalancers[nidx])
+			for nidx, _ := range elb.LoadBalancers {
+				if elb.LoadBalancers[nidx].LoadBalancerArn == input.LoadBalancerArns[idx] {
+					loadBalancers = append(loadBalancers, elb.LoadBalancers[nidx])
 				}
 			}
 		}
@@ -294,7 +294,7 @@ func (elb *MockELBV2API) DescribeLoadBalancers(input *elbv2.DescribeLoadBalancer
 		}, nil
 	} else { // otherwise just return all.
 		return &elbv2.DescribeLoadBalancersOutput{
-			LoadBalancers: elb.loadBalancers,
+			LoadBalancers: elb.LoadBalancers,
 		}, nil
 	}
 }
