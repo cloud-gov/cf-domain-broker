@@ -2,6 +2,7 @@ package types
 
 import (
 	"github.com/18f/cf-domain-broker/models"
+	"github.com/jinzhu/gorm"
 )
 
 type CdnPlanOptions struct {
@@ -16,6 +17,10 @@ type CdnPlanOptions struct {
 
 type DomainPlanOptions struct {
 	Domains []models.Domain `json:"domains"`
+}
+
+type DomainString struct {
+	Domains []string `json:"domains"`
 }
 
 type Settings struct {
@@ -49,5 +54,14 @@ type Settings struct {
 		3 = log.Error("Something failed but I'm not quitting.")
 		4 = log.Fatal("Bye.")
 	*/
-	LogLevel int `envconfig:"log_level" default:"2"`
+	LogLevel int `envconfig:"log_level" default:"1"`
+}
+
+func NewSettings() (Settings, error) {
+	var settings Settings
+	return settings, nil
+}
+
+func Connect(settings Settings) (*gorm.DB, error) {
+	return gorm.Open("postgres", settings.DatabaseUrl)
 }

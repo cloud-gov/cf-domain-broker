@@ -29,6 +29,7 @@ const (
 	Provisioning   State = 0
 	Provisioned    State = 1
 	Deprovisioning State = 2
+	Deprovisioned  State = 3
 )
 
 type State int

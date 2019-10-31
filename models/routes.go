@@ -47,3 +47,21 @@ type Domain struct {
 	gorm.Model
 	Value string
 }
+
+func (route *DomainRoute) GetDomains() []string {
+	var domains []string
+	for _, domain := range route.DomainExternal {
+		domains = append(domains, domain.Value)
+	}
+	return domains
+}
+
+/*
+func (route *DomainRoute) LoadUser(db *gorm.DB) (UserData, error) {
+	var userData UserData
+	if err := db.Model(route).Related(&userData).Error; err != nil {
+		return UserData{}, err
+	}
+
+	return
+}*/
