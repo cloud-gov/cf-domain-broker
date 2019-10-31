@@ -8,4 +8,5 @@ import (
 type Certificate struct {
 	gorm.Model
 	Resource *certificate.Resource
+	ARN      string
 }

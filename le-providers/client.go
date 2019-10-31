@@ -24,13 +24,13 @@ type AcmeClient struct {
 func NewAcmeClient(client *http.Client, resolvers map[string]string, config *lego.Config, provider challenge.Provider, logger lager.Logger) (*AcmeClient, error) {
 	a := &AcmeClient{
 		Resolvers:  resolvers,
-		AcmeConfig:config,
+		AcmeConfig: config,
 		logger: logger.Session("acme-client", lager.Data{
 			"resolvers": resolvers,
 		}),
 	}
 
-	a.AcmeConfig.HTTPClient = client
+	//a.AcmeConfig.HTTPClient = client
 
 	a.logger.Debug("instantiating-new-acme-client")
 
@@ -49,8 +49,6 @@ func NewAcmeClient(client *http.Client, resolvers map[string]string, config *leg
 	a.logger.Debug("using-nameservers", lager.Data{
 		"nameservers": nameservers,
 	})
-
-
 
 	if err = a.Client.Challenge.SetDNS01Provider(provider, dns01.AddRecursiveNameservers(nameservers), dns01.WrapPreCheck(a.preCheck)); err != nil {
 		a.logger.Error("acme-client-challenge-set-dns01-provider", err)

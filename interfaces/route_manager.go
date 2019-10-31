@@ -10,7 +10,7 @@ import (
 type RouteManager interface {
 	Create(instanceId string, domainOpts types.DomainPlanOptions, cdnOpts types.CdnPlanOptions, tags map[string]string) (*models.DomainRoute, error)
 	Update(instanceId string, domainOpts types.DomainPlanOptions, cdnOpts types.CdnPlanOptions) error
-	Get(instanceId string) (models.DomainRoute, error)
+	Get(instanceId string) (*models.DomainRoute, error)
 	Poll(route *models.DomainRoute) error
 	Disable(route *models.DomainRoute) error
 	Renew(route *models.DomainRoute) error

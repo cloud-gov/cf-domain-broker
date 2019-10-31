@@ -6,10 +6,9 @@ import (
 	"testing"
 
 	"code.cloudfoundry.org/lager"
+	"github.com/18f/cf-domain-broker/broker"
+	"github.com/18f/cf-domain-broker/types"
 	"github.com/pivotal-cf/brokerapi"
-
-	"github.com/18F/cf-domain-broker-alb/broker"
-	"github.com/18F/cf-domain-broker-alb/config"
 )
 
 func TestHTTPHandler(t *testing.T) {
@@ -18,7 +17,7 @@ func TestHTTPHandler(t *testing.T) {
 		lager.NewLogger("main.test"),
 		brokerapi.BrokerCredentials{},
 	)
-	handler := bindHTTPHandlers(brokerAPI, config.Settings{})
+	handler := bindHTTPHandlers(brokerAPI, types.Settings{})
 	req, err := http.NewRequest("GET", "http://example.com/healthcheck/http", nil)
 	if err != nil {
 		t.Error("Building new HTTP request: error should not have occurred")

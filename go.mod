@@ -11,10 +11,12 @@ require (
 	github.com/aws/aws-sdk-go v1.22.3
 	github.com/cloudfoundry-community/go-cfclient v0.0.0-20190611131856-16c98753d315
 	github.com/drewolson/testflight v1.0.0 // indirect
+	github.com/go-acme/lego v2.7.2+incompatible // indirect
 	github.com/go-acme/lego/v3 v3.0.0
 	github.com/gopherjs/gopherjs v0.0.0-20190430165422-3e4dfb77656c // indirect
 	github.com/gorilla/mux v1.7.2 // indirect
 	github.com/jinzhu/gorm v1.9.8
+	github.com/jmcarp/lego v0.3.1
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/lib/pq v1.1.1 // indirect
 	github.com/maxbrunsfeld/counterfeiter/v6 v6.2.2 // indirect
@@ -27,4 +29,10 @@ require (
 	github.com/stretchr/testify v1.3.0
 	github.com/xenolf/lego v2.7.2+incompatible // indirect
 	google.golang.org/appengine v1.6.1 // indirect
+	gopkg.in/square/go-jose.v1 v1.1.2 // indirect
+)
+
+replace (
+	golang.org/x/lint => golang.org/x/lint v0.0.0-20190409202823-959b441ac422
+	golang.org/x/time => golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
 )
