@@ -16,13 +16,10 @@ type DomainRoute struct {
 	State cfdomainbroker.State
 
 	// Our user data.
-	User UserData `gorm:"not null" gorm:"foreignkey:UserRef"`
+	User UserData `gorm:"not null"`
 
 	// The DNS challenge data.
 	DNSChallenge leproviders.DomainMessenger
-
-	// Our certificate.
-	Certificate *Certificate `gorm:"foreignkey:CertRef"`
 
 	// The ELB the route is tied to.
 	ELBArn string
@@ -31,7 +28,7 @@ type DomainRoute struct {
 	ListenerArn string
 
 	// DomainExternal is a slice of Domains because lots of DBs don't like array types.
-	DomainExternal []Domain `gorm:"foreignkey:domains"`
+	DomainExternal []Domain
 	DomainInternal string
 
 	// Cloudfront Distribution UserId.

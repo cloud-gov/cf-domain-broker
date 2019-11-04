@@ -30,7 +30,7 @@ func NewAcmeClient(client *http.Client, resolvers map[string]string, config *leg
 		}),
 	}
 
-	//a.AcmeConfig.HTTPClient = client
+	a.AcmeConfig.HTTPClient = client
 
 	a.logger.Debug("instantiating-new-acme-client")
 

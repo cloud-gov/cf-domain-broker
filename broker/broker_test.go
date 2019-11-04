@@ -47,7 +47,7 @@ type BrokerSuite struct {
 func (s *BrokerSuite) SetupSuite() {
 
 	var err error
-	s.DB, err = gorm.Open("sqlite3", ":memory:")
+	s.DB, err = gorm.Open("sqlite3", "/Users/kevinmlloyd/Development/go/workspace/cf-domain-broker/broker/testdata/test.db")
 	s.Require().NoError(err)
 
 	// set up the gravel test harness.
@@ -67,21 +67,14 @@ func (s *BrokerSuite) SetupSuite() {
 	settings := types.Settings{}
 	settings.AcmeUrl = fmt.Sprintf("https://%s%s", s.Gravel.Opts.ListenAddress, s.Gravel.Opts.WfeOpts.DirectoryPath)
 	settings.Email = "cloud-gov-operations@gsa.gov"
-
-	// set up our test writers.
-	testSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
-	logger := lager.NewLogger("domain-broker-test")
-	logger.RegisterSink(testSink)
-	loggerSession := logger.Session("test-suite")
+	resolvers := make(map[string]string)
+	resolvers["localhost"] = internalResolver
 
 	// migrate our DB to set up the schema.
 	if err := s.DB.AutoMigrate(&models.DomainRoute{}, &models.UserData{}, &models.Domain{}, &models.Certificate{}, &leproviders.DomainMessenger{}).Error; err != nil {
 		s.Require().NoError(err)
 	}
 	s.DB.SetLogger(s.Gravel.Logger) // use the gravel logger because lager.Logger doesn't have `Print`
-
-	resolvers := make(map[string]string)
-	resolvers["localhost"] = internalResolver
 
 	// set up our fakes. we need to create an elb so there's something the route manager can query for.
 	elbSvc := fakes.NewMockELBV2API()
@@ -106,6 +99,11 @@ func (s *BrokerSuite) SetupSuite() {
 		}
 	}
 
+	// set up our test writers.
+	testSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
+	logger := lager.NewLogger("domain-broker-test")
+	logger.RegisterSink(testSink)
+	loggerSession := logger.Session("test-suite")
 	trmLogger := loggerSession.Session("test-route-manager")
 
 	s.Manager, err = routes.NewManager(
@@ -144,21 +142,21 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlan() {
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	var verifyRoute models.DomainRoute
-	if err := s.DB.Find(&verifyRoute, &models.DomainRoute{InstanceId: serviceInstanceId}).Error; err != nil {
+	if err := s.DB.Where("instance_id = ?", serviceInstanceId).First(&verifyRoute).Error; err != nil {
 		s.Require().NoError(err, "there should be no error querying for the domain route")
 	}
 
 	s.Require().NotNil(verifyRoute, "the route must not be empty")
 
-	/*var localCert models.Certificate
-	if err := s.DB.Model(&verifyRoute).Related(&localCert.Resource.Certificate, "Certificate").Error; err != nil {
-		s.Require().NoError(err, "there should be no error when searching for the related certificate")
-	}*/
+	localCert := &models.Certificate{}
+	if err := s.DB.Where("instance_id = ?", serviceInstanceId).First(&localCert).Error; err != nil {
+		s.Require().NoError(err, "there should be no error when searching for the related certificate in the database")
+	}
 
 	s.Require().EqualValues(serviceInstanceId, verifyRoute.InstanceId, "service instance id must match deployed service instance")
 	s.Require().EqualValues(cfdomainbroker.Provisioned, verifyRoute.State, "state must be provisioned")
-	//s.Require().NotNil(verifyRoute.Certificate, "certificate result must not be nil")
-	//s.Require().NotEmpty(verifyRoute.Certificate.Resource.Certificate, "certificate must not be empty")
+	s.Require().NotNil(localCert, "certificate result must not be nil")
+	s.Require().NotEmpty(localCert.Resource.Certificate, "certificate must not be empty")
 }
 
 func (s *BrokerSuite) TestDomainBroker_Services() {
