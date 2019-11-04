@@ -17,3 +17,4 @@ applications:
     API_ADDRESS: https://api.fr-stage.cloud.gov
     DEFAULT_ORIGIN: cf-domain-broker.fr-stage.cloud.gov
     LogLevel: 1
+    RESOLVERS: "google:8.8.8.8,cloudflare:1.1.1.1"

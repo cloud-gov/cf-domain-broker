@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/18f/cf-domain-broker/broker"
@@ -35,6 +36,10 @@ func main() {
 
 	// now that we have our config, we can start instantiating.
 	logger := lager.NewLogger("domain-broker")
+
+	sink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
+	logger.RegisterSink(sink)
+
 	loggerSession := logger.Session("main")
 
 	db, err := gorm.Open("postgres", settings.DatabaseUrl)

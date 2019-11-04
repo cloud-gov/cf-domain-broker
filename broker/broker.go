@@ -228,7 +228,8 @@ func (d *DomainBroker) LastOperation(ctx context.Context, instanceID string, det
 
 	err = d.Manager.Poll(r)
 	if err != nil {
-		d.logger.Error("error during poll", err)
+		d.logger.Error("error-during-poll", err)
+		return domain.LastOperation{}, apiresponses.NewFailureResponse(err, 409, "cannot reconcile queried state with desired state")
 	}
 
 	switch r.State {

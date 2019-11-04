@@ -33,7 +33,7 @@ import (
 	"github.com/go-acme/lego/v3/lego"
 	"github.com/go-acme/lego/v3/registration"
 	"github.com/jinzhu/gorm"
-	"github.com/pivotal-cf/brokerapi"
+	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
 )
 
 // RouteManager is the worker for managing custom domains.
@@ -132,6 +132,13 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		"domains":     domainOpts.Domains,
 	})
 
+	defer func(lsession lager.Logger) {
+		if r := recover(); r != nil {
+			err := errors.New(fmt.Sprintln(r))
+			lsession.Error("panic!", err)
+		}
+	}(lsession)
+
 	// generate a new key.
 	key, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
@@ -149,7 +156,6 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 
 	conf := lego.NewConfig(&user)
 	conf.CADirURL = r.Settings.AcmeUrl
-	//conf.HTTPClient = r.AcmeHttpClient
 
 	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.Dns, r.Logger)
 	if err != nil {
@@ -168,7 +174,6 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 			State:          cfdomainbroker.Provisioning,
 			User:           user,
 			DomainExternal: domainOpts.Domains,
-			Certificate:    &models.Certificate{},
 		}
 
 		// register our user resource.
@@ -181,12 +186,12 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		// store the certificate and elb info the database.
 		// check for debug.
 		if r.Settings.LogLevel == 1 {
-			if err := r.Db.Debug().Create(localDomainRoute).Error; err != nil {
+			if err := r.Db.Debug().Create(&localDomainRoute).Error; err != nil {
 				lsession.Error("db-debug-save-route", err)
 				return &models.DomainRoute{}, err
 			}
 		} else {
-			if err := r.Db.Create(localDomainRoute).Error; err != nil {
+			if err := r.Db.Create(&localDomainRoute).Error; err != nil {
 				lsession.Error("db-save-route", err)
 				return &models.DomainRoute{}, err
 			}
@@ -210,8 +215,25 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 			lsession.Error("acme-certificate-obtain", err)
 			return &models.DomainRoute{}, err
 		}
-		localDomainRoute.Certificate.Resource = cert
 		lsession.Info("certificate-obtained")
+
+		localCert := models.Certificate{
+			InstanceId: instanceId,
+			Resource:   cert,
+		}
+
+		if r.Settings.LogLevel == 1 {
+			if err := r.Db.Debug().Create(&localCert).Error; err != nil {
+				lsession.Error("db-save-certificate", err)
+				return &models.DomainRoute{}, nil
+			}
+		} else {
+			if err := r.Db.Create(&localCert).Error; err != nil {
+				lsession.Error("db-save-certificate", err)
+				return &models.DomainRoute{}, nil
+			}
+		}
+		lsession.Info("db-certificate-stored")
 
 		// find the least assigned ELB to assign the route to.
 		var targetElb *elbv2.LoadBalancer
@@ -231,8 +253,8 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 
 		// generate the necessary input.
 		certUploadInput := &iam.UploadServerCertificateInput{}
-		certUploadInput.SetCertificateBody(string(localDomainRoute.Certificate.Resource.Certificate))
-		certUploadInput.SetPrivateKey(string(localDomainRoute.Certificate.Resource.PrivateKey))
+		certUploadInput.SetCertificateBody(string(localCert.Resource.Certificate))
+		certUploadInput.SetPrivateKey(string(localCert.Resource.PrivateKey))
 		certUploadInput.SetServerCertificateName(fmt.Sprintf("cf-domain-%s", instanceId))
 
 		// upload the certificate.
@@ -244,7 +266,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 		lsession.Info("certificate-uploaded-to-iam")
 
 		//save cert ARN
-		localDomainRoute.Certificate.ARN = *certArn.ServerCertificateMetadata.Arn
+		localCert.ARN = *certArn.ServerCertificateMetadata.Arn
 
 		// grab the listeners.
 		listeners, err := r.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
@@ -386,14 +408,14 @@ func (r *RouteManager) Get(instanceId string) (*models.DomainRoute, error) {
 	if result.Error == nil {
 		lsession.Error("db-get-first-route", result.Error)
 	} else if result.RecordNotFound() {
-		lsession.Error("db-record-not-found", brokerapi.ErrInstanceDoesNotExist)
-		return nil, brokerapi.ErrInstanceDoesNotExist
+		lsession.Error("db-record-not-found", apiresponses.ErrInstanceDoesNotExist)
+		return &models.DomainRoute{}, apiresponses.ErrInstanceDoesNotExist
 	} else {
 		lsession.Error("db-generic-error", result.Error)
-		return nil, result.Error
+		return &models.DomainRoute{}, result.Error
 	}
 
-	return nil, nil
+	return &localRoute, nil
 }
 
 func (r *RouteManager) stillActive(route *models.DomainRoute) error {
@@ -459,141 +481,28 @@ func (r *RouteManager) stillActive(route *models.DomainRoute) error {
 }
 
 func (r *RouteManager) Poll(route *models.DomainRoute) error {
+	lsession := r.Logger.Session("poll", lager.Data{
+		"instance-id": route.InstanceId,
+	})
 	switch route.State {
 	case cfdomainbroker.Provisioning:
-		return r.updateProvisioning(route)
+		lsession.Info("check-provisioning")
+		//return r.updateProvisioning(route)
+		return nil
 	case cfdomainbroker.Deprovisioning:
-		return r.updateDeprovisioning(route)
+		lsession.Info("check-deprovisioning")
+		//return r.updateDeprovisioning(route)
+		return nil
 	default:
 		return nil
 	}
 }
 
 func (r *RouteManager) updateProvisioning(route *models.DomainRoute) error {
-	r.Logger.Info("loading-user", lager.Data{
+	r.Logger.Info("update-provisioning-does-nothing", lager.Data{
 		"guid":    route.ID,
-		"domains": route.GetDomains,
+		"domains": route.GetDomains(),
 	})
-
-	user := route.User
-
-	conf := lego.NewConfig(&user)
-	conf.CADirURL = r.Settings.AcmeUrl
-	conf.HTTPClient = r.AcmeHttpClient
-
-	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.Dns, r.Logger)
-	if err != nil {
-		r.Logger.Error("acme-new-client", err)
-		return err
-	}
-	r.Logger.Debug("acme-client-started")
-
-	if len(route.GetDomains()) > 1 || r.checkDistribution(route) {
-		// make the certificate request.
-		request := certificate.ObtainRequest{
-			Domains: route.GetDomains(),
-			Bundle:  true,
-		}
-
-		// get the certificate.
-		cert, err := acmeClient.Client.Certificate.Obtain(request)
-		if err != nil {
-			r.Logger.Error("acme-certificate-obtain", err)
-			return err
-		}
-		route.Certificate.Resource = cert
-		r.Logger.Info("certificate-obtained")
-
-		// find the least assigned ELB to assign the route to.
-		var targetElb *elbv2.LoadBalancer
-		leastAssigned := 0
-		for idx := range r.elbs {
-			if r.elbs[idx].certsOnListener >= leastAssigned {
-				targetElb = r.elbs[idx].lb
-				leastAssigned = r.elbs[idx].certsOnListener
-			}
-		}
-		r.Logger.Debug("least-assigned-found", lager.Data{
-			"elb-target": &targetElb.LoadBalancerArn,
-		})
-
-		// save the ELB arn.
-		route.ELBArn = *targetElb.LoadBalancerArn
-
-		// generate the necessary input.
-		certUploadInput := &iam.UploadServerCertificateInput{}
-		certUploadInput.SetCertificateBody(string(route.Certificate.Resource.Certificate))
-		certUploadInput.SetPrivateKey(string(route.Certificate.Resource.PrivateKey))
-		certUploadInput.SetServerCertificateName(fmt.Sprintf("cf-domain-%s", route.InstanceId))
-
-		// upload the certificate.
-		certArn, err := r.IamSvc.UploadServerCertificate(certUploadInput)
-		if err != nil {
-			r.Logger.Error("iam-upload-server-certificate", err)
-			return err
-		}
-		r.Logger.Info("certificate-uploaded-to-iam")
-
-		//save cert ARN
-		route.Certificate.ARN = *certArn.ServerCertificateMetadata.Arn
-
-		// grab the listeners.
-		listeners, err := r.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
-			LoadBalancerArn: targetElb.LoadBalancerArn,
-		})
-		if err != nil {
-			r.Logger.Error("elbsvc-describe-listeners", err)
-			return err
-		}
-		r.Logger.Debug("found-listeners", lager.Data{
-			"listeners": listeners.Listeners,
-		})
-
-		// find our target listener.
-		var targetListenArn *string
-		for idx := range listeners.Listeners {
-			if *listeners.Listeners[idx].Protocol == "HTTPS" {
-				targetListenArn = listeners.Listeners[idx].ListenerArn
-			}
-		}
-
-		// do a nil reference check and store the listener arn reference.
-		if targetListenArn != nil {
-			route.ListenerArn = *targetListenArn
-		} else {
-			err := errors.New("missing listener arn")
-			r.Logger.Error("listener-arn-is-nil", err)
-			return err
-		}
-
-		r.Logger.Debug("found-https-listener", lager.Data{
-			"listener-arn": route.ListenerArn,
-		})
-
-		// upload the certificate to the listener.
-		if _, err := r.ElbSvc.AddListenerCertificates(&elbv2.AddListenerCertificatesInput{
-			ListenerArn: targetListenArn,
-			Certificates: []*elbv2.Certificate{
-				{
-					CertificateArn: certArn.ServerCertificateMetadata.Arn,
-				},
-			},
-		}); err != nil {
-			r.Logger.Error("elbsvc-add-listener-certificates", err)
-			return err
-		}
-		r.Logger.Info("certificate-uploaded-to-elb")
-
-		// since it's been uploaded to the elb, it's done.
-		route.State = cfdomainbroker.Provisioned
-
-		// store the certificate and elb info the database.
-		if err := r.Db.Save(route).Error; err != nil {
-			r.Logger.Error("db-save-route", err)
-			return err
-		}
-		return nil
-	}
 	return nil
 }
 
@@ -644,7 +553,10 @@ func (r *RouteManager) purgeCertificate(route *models.DomainRoute, cert *models.
 	}
 
 	for {
-		r.Logger.Info("deleting-cert", lager.Data{"guid": route.ID, "domains": route.GetDomains, "name": route.InstanceId})
+		r.Logger.Info("deleting-cert", lager.Data{
+			"guid":    route.ID,
+			"domains": route.GetDomains,
+			"name":    route.InstanceId})
 		if _, err := r.IamSvc.DeleteServerCertificate(&iam.DeleteServerCertificateInput{
 			ServerCertificateName: aws.String(route.InstanceId),
 		}); err != nil {
@@ -662,16 +574,30 @@ func (r *RouteManager) purgeCertificate(route *models.DomainRoute, cert *models.
 }
 
 func (r *RouteManager) Disable(route *models.DomainRoute) error {
-	lsession := r.Logger.Session("route-manager", lager.Data{
-		"instance-id": route.InstanceId,
-	})
+
+	// for some reason `route` can be nil, weird we have to nil check it. if it's nil, return since there's nothing
+	// to do.
+	// todo (mxplusb): figure this out at some point.
+	var lsession lager.Logger
+	if route == nil {
+		lsession = r.Logger.Session("route-manager-disable")
+		err := errors.New("the domain route is nil, unable to disable")
+		lsession.Error("nil-domain-route", err)
+		return err
+	} else {
+		lsession = r.Logger.Session("route-manager-disable", lager.Data{
+			"instance-id": route.InstanceId,
+		})
+	}
 	lsession.Info("disable-route")
 
 	var certRow models.Certificate
 	certErr := r.Db.Model(route).Related(&certRow).Error
 	switch certErr {
 	case nil:
+		lsession.Error("db-error", certErr)
 		if err := r.purgeCertificate(route, &certRow); err != nil {
+			lsession.Error("purge-certificate-error", certErr)
 			return err
 		}
 	case gorm.ErrRecordNotFound:
@@ -715,12 +641,15 @@ func (r *RouteManager) Renew(route *models.DomainRoute) error {
 	lsession.Debug("acme-client-started")
 
 	// renew the certificate.
-	cert, err := acmeClient.Client.Certificate.Renew(*route.Certificate.Resource, true, false)
+
+	localCert := models.Certificate{InstanceId:route.InstanceId}
+
+	cert, err := acmeClient.Client.Certificate.Renew(*localCert.Resource, true, false)
 	if err != nil {
 		lsession.Error("acme-certificate-renew", err)
 		return err
 	}
-	route.Certificate.Resource = cert
+	localCert.Resource = cert
 	lsession.Info("certificate-obtained")
 
 	if err := r.Db.Save(route).Error; err != nil {
@@ -757,12 +686,15 @@ func (r *RouteManager) RenewAll() {
 		}
 
 		// renew the cert or skip from errors.
-		newCert, err := acmeClient.Certificate.Renew(*localRoute.Certificate.Resource, true, false)
+
+		localCert := models.Certificate{InstanceId:localRoute.InstanceId}
+
+		newCert, err := acmeClient.Certificate.Renew(*localCert.Resource, true, false)
 		if err != nil {
 			lsession.Error("acme-renew-certificate", err)
 			continue
 		}
-		localRoute.Certificate.Resource = newCert
+		localCert.Resource = newCert
 
 		if err := r.Db.Save(localRoute).Error; err != nil {
 			lsession.Error("db-save", err)
