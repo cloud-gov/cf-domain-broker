@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+	"time"
 
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
@@ -47,7 +48,7 @@ type BrokerSuite struct {
 func (s *BrokerSuite) SetupSuite() {
 
 	var err error
-	s.DB, err = gorm.Open("sqlite3", "/Users/kevinmlloyd/Development/go/workspace/cf-domain-broker/broker/testdata/test.db")
+	s.DB, err = gorm.Open("sqlite3", ":memory:")
 	s.Require().NoError(err)
 
 	// set up the gravel test harness.
@@ -71,7 +72,11 @@ func (s *BrokerSuite) SetupSuite() {
 	resolvers["localhost"] = internalResolver
 
 	// migrate our DB to set up the schema.
-	if err := s.DB.AutoMigrate(&models.DomainRoute{}, &models.UserData{}, &models.Domain{}, &models.Certificate{}, &leproviders.DomainMessenger{}).Error; err != nil {
+	if err := s.DB.AutoMigrate(&models.DomainRoute{},
+		&models.UserData{},
+		&models.Domain{},
+		&models.Certificate{},
+		&leproviders.DomainMessenger{}).Error; err != nil {
 		s.Require().NoError(err)
 	}
 	s.DB.SetLogger(s.Gravel.Logger) // use the gravel logger because lager.Logger doesn't have `Print`
@@ -79,7 +84,7 @@ func (s *BrokerSuite) SetupSuite() {
 	// set up our fakes. we need to create an elb so there's something the route manager can query for.
 	elbSvc := fakes.NewMockELBV2API()
 	iamSvc := fakes.NewMockIAMAPI()
-	/*cloudfrontSvc := new(fakes.FakeCloudFrontAPI)*/
+	//cloudfrontSvc := new(fakes.FakeCloudFrontAPI)
 
 	// create 5 ELBs, and a random number (<= 25) of listeners on each to ensure there's some variety in it, so we can
 	// ensure the least assigned logic works.
@@ -122,7 +127,8 @@ func (s *BrokerSuite) SetupSuite() {
 	s.Broker = NewDomainBroker(&s.Manager, trmLogger)
 }
 
-func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlan() {
+// Test where DNS will be autosolved, this is really just ensuring the core functionality works.
+func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 	b := s.Broker
 
 	var (
@@ -157,6 +163,62 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlan() {
 	s.Require().EqualValues(cfdomainbroker.Provisioned, verifyRoute.State, "state must be provisioned")
 	s.Require().NotNil(localCert, "certificate result must not be nil")
 	s.Require().NotEmpty(localCert.Resource.Certificate, "certificate must not be empty")
+}
+
+// Test where DNS does not auto-present, a more realistic test.
+func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() {
+
+	if testing.Short() {
+		s.T().Skip("skipping ProvisionDomainPlanWithDomainMessenger as it is a long test")
+	}
+
+	s.Gravel.Opts.AutoUpdateAuthZRecords = false
+	oldProvider := s.Manager.Dns
+	s.Manager.Dns = leproviders.NewServiceBrokerDNSProvider(s.DB)
+
+	var (
+		serviceInstanceId = uuid.New()
+	)
+
+	// test the domain plan.
+	d := domain.ProvisionDetails{
+		PlanID:        cfdomainbroker.DomainPlanId,
+		RawParameters: []byte(fmt.Sprintf(`{"domains": ["test.service"]}`)),
+	}
+
+	// run in the background until we verify the DNS records exist in the DB, which is the equivalent of a user going
+	// and adding the TXT records of their DNS server. once we verify the records, this should continue in the
+	// background. we have to do this because otherwise it blocks.
+	go func() {
+		res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
+		if err != nil {
+			s.Require().NoError(err, "provisioning should not throw an error")
+		}
+		s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
+	}()
+
+	// sleep for a bit to let the cert get issues and the db store things.
+	time.Sleep(time.Second * 5)
+
+	localDomainMessenger := leproviders.DomainMessenger{
+		Domain: "test.service",
+	}
+	if err := s.DB.Model(&localDomainMessenger).First(&localDomainMessenger).Error; err != nil {
+		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
+	}
+
+	s.Require().NotEmpty(localDomainMessenger.Domain, "domain value should not be empty")
+	s.Require().NotEmpty(localDomainMessenger.KeyAuth, "keyauth value should not be empty")
+	s.Require().NotEmpty(localDomainMessenger.Token, "domain token should not be empty")
+
+	// reset the configuration to let the DNS pass the authorization.
+	s.Gravel.Opts.AutoUpdateAuthZRecords = true
+
+	// sleep for awhile until the client checks things normally.
+	time.Sleep(cfdomainbroker.DomainCreateCheck)
+
+	// reset the old dns provider.
+	s.Manager.Dns = oldProvider
 }
 
 func (s *BrokerSuite) TestDomainBroker_Services() {

@@ -14,11 +14,12 @@ import (
 
 // Internal DNS provider.
 type ServiceBrokerDNSProvider struct {
-	// Handler for sharing the DNS resolver records.
-	Handler chan DomainMessenger
-
 	// Db access
 	Db *gorm.DB
+}
+
+func NewServiceBrokerDNSProvider(db *gorm.DB) *ServiceBrokerDNSProvider {
+	return &ServiceBrokerDNSProvider{Db: db}
 }
 
 // Set our default timeout to be 24 hours and check every 3 minutes.
