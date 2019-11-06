@@ -7,7 +7,7 @@ require (
 	code.cloudfoundry.org/lager v2.0.0+incompatible
 	github.com/18F/cf-cdn-service-broker v0.0.0-20190603161008-b2df4416bef5 // indirect
 	github.com/18F/cf-domain-broker-alb v0.0.0-20190604210022-931b786921e7
-	github.com/18f/gravel v0.0.0-20191101193351-90814118c70b
+	github.com/18f/gravel v0.0.0-20191106155455-f57452bc9b14
 	github.com/aws/aws-sdk-go v1.23.0
 	github.com/cloudfoundry-community/go-cfclient v0.0.0-20190611131856-16c98753d315
 	github.com/drewolson/testflight v1.0.0 // indirect
@@ -28,9 +28,9 @@ require (
 	github.com/stretchr/objx v0.2.0 // indirect
 	github.com/stretchr/testify v1.4.0
 	github.com/xenolf/lego v2.7.2+incompatible // indirect
-	golang.org/x/crypto v0.0.0-20191029031824-8986dd9e96cf // indirect
-	golang.org/x/net v0.0.0-20191101175033-0deb6923b6d9 // indirect
-	golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c // indirect
+	golang.org/x/crypto v0.0.0-20191105034135-c7e5f84aec59 // indirect
+	golang.org/x/net v0.0.0-20191105084925-a882066a44e0 // indirect
+	golang.org/x/sys v0.0.0-20191105231009-c1f44814a5cd // indirect
 	google.golang.org/appengine v1.6.1 // indirect
 	gopkg.in/square/go-jose.v1 v1.1.2 // indirect
 	gopkg.in/square/go-jose.v2 v2.4.0 // indirect
