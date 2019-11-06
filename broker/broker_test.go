@@ -203,7 +203,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	localDomainMessenger := leproviders.DomainMessenger{
 		Domain: "test.service",
 	}
-	if err := s.DB.Model(&localDomainMessenger).First(&localDomainMessenger).Error; err != nil {
+	if err := s.DB.Where("domain = ?", localDomainMessenger.Domain).Find(&localDomainMessenger).Error; err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
 	}
 
@@ -219,6 +219,41 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 
 	// reset the old dns provider.
 	s.Manager.Dns = oldProvider
+}
+
+func (s *BrokerSuite) TestDomainBroker_Deprovision() {
+	var (
+		serviceInstanceId = uuid.New()
+	)
+
+	// test the domain plan.
+	d := domain.ProvisionDetails{
+		PlanID:        cfdomainbroker.DomainPlanId,
+		RawParameters: []byte(fmt.Sprintf(`{"domains": ["test.service"]}`)),
+	}
+
+	res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
+	if err != nil {
+		s.Require().NoError(err, "provisioning should not throw an error")
+	}
+	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
+
+	delResp, err := s.Broker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
+		PlanID:    "",
+		ServiceID: "",
+		Force:     true,
+	}, true)
+	s.Require().NoError(err, "there must not be an error deprovisioning the service instance")
+	s.Require().Equal(true, delResp.IsAsync, "deprovision must be async")
+
+	// verify the route does not exist in the db.
+	localRoute := models.DomainRoute{
+		InstanceId: serviceInstanceId,
+	}
+	dbResp := s.DB.Where("instance_id = ?", &localRoute.InstanceId).Find(&localRoute)
+
+	s.Require().Error(dbResp.Error, "there must be an error when querying the db because the record should not exist")
+	s.Require().Equal(dbResp.Error.Error(), "record not found", "the error must be 'record not found'")
 }
 
 func (s *BrokerSuite) TestDomainBroker_Services() {

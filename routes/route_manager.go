@@ -405,13 +405,11 @@ func (r *RouteManager) Get(instanceId string) (*models.DomainRoute, error) {
 
 	var localRoute models.DomainRoute
 	result := r.Db.First(&localRoute, &models.DomainRoute{InstanceId: instanceId})
-	if result.Error == nil {
-		lsession.Error("db-get-first-route", result.Error)
-	} else if result.RecordNotFound() {
+	if result.RecordNotFound() {
 		lsession.Error("db-record-not-found", apiresponses.ErrInstanceDoesNotExist)
 		return &models.DomainRoute{}, apiresponses.ErrInstanceDoesNotExist
-	} else {
-		lsession.Error("db-generic-error", result.Error)
+	} else if result.Error != nil {
+		lsession.Error("db-get-first-route", result.Error)
 		return &models.DomainRoute{}, result.Error
 	}
 
@@ -487,23 +485,15 @@ func (r *RouteManager) Poll(route *models.DomainRoute) error {
 	switch route.State {
 	case cfdomainbroker.Provisioning:
 		lsession.Info("check-provisioning")
-		//return r.updateProvisioning(route)
+		// todo (mxplusb): return the domain messenger value here.
 		return nil
 	case cfdomainbroker.Deprovisioning:
 		lsession.Info("check-deprovisioning")
-		//return r.updateDeprovisioning(route)
+		// todo (mxplusb): figure out what to do here.
 		return nil
 	default:
 		return nil
 	}
-}
-
-func (r *RouteManager) updateProvisioning(route *models.DomainRoute) error {
-	r.Logger.Info("update-provisioning-does-nothing", lager.Data{
-		"guid":    route.ID,
-		"domains": route.GetDomains(),
-	})
-	return nil
 }
 
 func (r *RouteManager) updateDeprovisioning(route *models.DomainRoute) error {
@@ -574,36 +564,58 @@ func (r *RouteManager) purgeCertificate(route *models.DomainRoute, cert *models.
 }
 
 func (r *RouteManager) Disable(route *models.DomainRoute) error {
+	lsession := r.Logger.Session("route-manager-disable", lager.Data{
+		"instance-id": route.InstanceId,
+	})
 
-	// for some reason `route` can be nil, weird we have to nil check it. if it's nil, return since there's nothing
-	// to do.
-	// todo (mxplusb): figure this out at some point.
-	var lsession lager.Logger
-	if route == nil {
-		lsession = r.Logger.Session("route-manager-disable")
-		err := errors.New("the domain route is nil, unable to disable")
-		lsession.Error("nil-domain-route", err)
-		return err
-	} else {
-		lsession = r.Logger.Session("route-manager-disable", lager.Data{
-			"instance-id": route.InstanceId,
-		})
-	}
 	lsession.Info("disable-route")
 
-	var certRow models.Certificate
-	certErr := r.Db.Model(route).Related(&certRow).Error
-	switch certErr {
-	case nil:
-		lsession.Error("db-error", certErr)
-		if err := r.purgeCertificate(route, &certRow); err != nil {
-			lsession.Error("purge-certificate-error", certErr)
-			return err
-		}
-	case gorm.ErrRecordNotFound:
-	default:
-		return certErr
+	var localRoute models.DomainRoute
+	result := r.Db.First(&localRoute, &models.DomainRoute{InstanceId: route.InstanceId})
+
+	if result.RecordNotFound() {
+		lsession.Error("db-route-not-found", result.Error)
+		return result.Error
+	} else if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		return result.Error
 	}
+
+	result = r.Db.Delete(&localRoute)
+
+	if result.RecordNotFound() {
+		lsession.Error("db-route-not-found", result.Error)
+		return result.Error
+	} else if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		return result.Error
+	}
+
+	var localCert models.Certificate
+	result = r.Db.First(&localCert, &models.Certificate{InstanceId: route.InstanceId})
+
+	if result.RecordNotFound() {
+		lsession.Error("db-certificate-not-found", result.Error)
+		return result.Error
+	} else if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		return result.Error
+	}
+
+	if err := r.purgeCertificate(route, &localCert); err != nil {
+		lsession.Error("purging-certificate", err)
+	}
+
+	result = r.Db.Delete(&localCert)
+
+	if result.RecordNotFound() {
+		lsession.Error("db-certificate-not-found", result.Error)
+		return result.Error
+	} else if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		return result.Error
+	}
+
 	return nil
 }
 

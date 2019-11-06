@@ -153,9 +153,9 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	})
 
 	// check for duplicates.
-	_, err := d.Manager.Get(instanceID)
-	if err == nil {
-		lsession.Error("duplicate-instance", err)
+	resp, err := d.Manager.Get(instanceID)
+	if resp.InstanceId != "" {
+		lsession.Error("preexisting-instance", err)
 		return spec, apiresponses.ErrInstanceAlreadyExists
 	}
 
@@ -185,11 +185,10 @@ func (d *DomainBroker) Deprovision(ctx context.Context, instanceID string, detai
 
 	err = d.Manager.Disable(route)
 	if err != nil {
-		return domain.DeprovisionServiceSpec{}, nil
+		return domain.DeprovisionServiceSpec{}, err
 	}
 
 	return domain.DeprovisionServiceSpec{IsAsync: true}, nil
-
 }
 
 func (d *DomainBroker) GetInstance(ctx context.Context, instanceID string) (domain.GetInstanceDetailsSpec, error) {

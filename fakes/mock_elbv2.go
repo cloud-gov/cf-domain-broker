@@ -1,6 +1,7 @@
 package fakes
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -467,8 +468,23 @@ func (elb *MockELBV2API) RegisterTargetsRequest(*elbv2.RegisterTargetsInput) (*r
 	panic("implement me")
 }
 
-func (elb *MockELBV2API) RemoveListenerCertificates(*elbv2.RemoveListenerCertificatesInput) (*elbv2.RemoveListenerCertificatesOutput, error) {
-	panic("implement me")
+func (elb *MockELBV2API) RemoveListenerCertificates(input *elbv2.RemoveListenerCertificatesInput) (*elbv2.RemoveListenerCertificatesOutput, error) {
+	// for each elb
+	for idx, _ := range elb.Listeners {
+		// if the listener arn is the same as the one we want
+		if elb.Listeners[idx].ListenerArn == input.ListenerArn {
+			// for each certificate on the listener
+			for nidx, _ := range elb.Listeners[idx].Certificates {
+				// if the certificate on the listener is the same one we want to remove
+				if elb.Listeners[idx].Certificates[nidx].CertificateArn == input.Certificates[0].CertificateArn {
+					// remove it from the internal slice reference.
+					elb.Listeners[idx].Certificates = append(elb.Listeners[idx].Certificates[:nidx], elb.Listeners[idx].Certificates[nidx+1:]...)
+					return &elbv2.RemoveListenerCertificatesOutput{}, nil
+				}
+			}
+		}
+	}
+	return &elbv2.RemoveListenerCertificatesOutput{}, errors.New("cannot find elb listener certificate")
 }
 
 func (elb *MockELBV2API) RemoveListenerCertificatesWithContext(aws.Context, *elbv2.RemoveListenerCertificatesInput, ...request.Option) (*elbv2.RemoveListenerCertificatesOutput, error) {
