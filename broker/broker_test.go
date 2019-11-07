@@ -50,7 +50,7 @@ type BrokerSuite struct {
 func (s *BrokerSuite) SetupTest() {
 
 	var err error
-	s.DB, err = gorm.Open("sqlite3", "/Users/kevinmlloyd/Development/go/workspace/cf-domain-broker/broker/testdata/test.db")
+	s.DB, err = gorm.Open("sqlite3", ":memory:")
 	s.Require().NoError(err)
 
 	// set up the gravel test harness.

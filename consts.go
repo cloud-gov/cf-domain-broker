@@ -24,7 +24,7 @@ const (
 	MaxHeaderCount = 10
 
 	DomainCreateTimeout = time.Hour * 24
-	DomainCreateCheck   = time.Second * 1
+	DomainCreateCheck   = time.Second * 10
 
 	Provisioning   State = 0
 	Provisioned    State = 1
