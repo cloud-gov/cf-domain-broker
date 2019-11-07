@@ -46,7 +46,7 @@ func (u testUser) GetPrivateKey() crypto.PrivateKey {
 	return u.PrivateKey
 }
 
-func (s *ClientSuite) SetupSuite() {
+func (s *ClientSuite) SetupTest() {
 	// build the user with the new key, instantiate a client
 	s.user = &testUser{
 		Email:      "test@gsa.gov",
@@ -54,6 +54,10 @@ func (s *ClientSuite) SetupSuite() {
 		PrivateKey: "123",
 	}
 	s.logger = lager.NewLogger("test")
+}
+
+func (s *ClientSuite) TearDownTest() {
+	s.user = &testUser{}
 }
 
 // todo (mxplusb): add better test.
@@ -83,6 +87,29 @@ func (s *ClientSuite) TestNewAcmeClientWithHttpClient() {
 	}
 
 	a, err := NewAcmeClient(client, make(map[string]string), lego.NewConfig(s.user), ServiceBrokerDNSProvider{}, s.logger, "")
+	if err != nil {
+		s.Error(err, "error instantiating new acme client.")
+	}
+
+	s.Require().NoError(err)
+	s.Require().NotNil(a.Client)
+}
+
+func (s *ClientSuite) TestNewAcmeClientWithNilChallengeProvider() {
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+
+	a, err := NewAcmeClient(client, make(map[string]string), lego.NewConfig(s.user), nil, s.logger, "")
 	if err != nil {
 		s.Error(err, "error instantiating new acme client.")
 	}

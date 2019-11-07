@@ -117,10 +117,14 @@ func (s *BrokerSuite) SetupTest() {
 	s.Manager, err = routes.NewManager(
 		trmLogger,
 		iamSvc,
-		&interfaces.CloudfrontDistribution{settings, nil},
+		&interfaces.CloudfrontDistribution{
+			Settings: settings,
+			Service: nil,
+		},
 		elbSvc,
 		settings,
 		s.DB,
+		false,
 	)
 	s.Manager.DnsChallengeProvider = s.Gravel.DnsServer.Opts.Provider
 	s.Manager.AcmeHttpClient = s.Gravel.Client
@@ -196,7 +200,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	)
 
 	s.Gravel.Opts.AutoUpdateAuthZRecords = false
-	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger, serviceInstanceId)
+	s.Manager.PersistentDnsProvider = true
 
 	// test the domain plan.
 	d := domain.ProvisionDetails{
@@ -236,14 +240,14 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 
 	// send the record to the dns server
 	s.Gravel.DnsServer.RecordsHandler <- dns.DnsMessage{
-		Domain: localDomainMessenger.Domain,
-		Token: localDomainMessenger.Token,
+		Domain:  localDomainMessenger.Domain,
+		Token:   localDomainMessenger.Token,
 		KeyAuth: localDomainMessenger.KeyAuth,
 	}
 
 	// sleep for awhile until the client checks things normally.
 	time.Sleep(cfdomainbroker.DomainCreateCheck * 2)
-	
+
 	localCert := models.Certificate{
 		InstanceId: serviceInstanceId,
 	}
@@ -305,7 +309,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 
 	s.Gravel.Opts.AutoUpdateAuthZRecords = false
 	s.Gravel.Opts.DnsOpts.AlreadyHashed = true
-	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger, serviceInstanceId)
+	s.Manager.PersistentDnsProvider = true
 
 	// test the domain plan.
 	d := domain.ProvisionDetails{
@@ -339,8 +343,8 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 		s.Require().NotEmpty(localDomainMessenger.Token, "domain token should not be empty")
 
 		s.Gravel.DnsServer.RecordsHandler <- dns.DnsMessage{
-			Domain: localDomainMessenger.Domain,
-			Token: localDomainMessenger.Token,
+			Domain:  localDomainMessenger.Domain,
+			Token:   localDomainMessenger.Token,
 			KeyAuth: localDomainMessenger.KeyAuth,
 		}
 	}

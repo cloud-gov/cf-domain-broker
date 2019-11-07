@@ -58,7 +58,8 @@ type RouteManager struct {
 	ElbSvc elbv2iface.ELBV2API
 
 	// dns challenger
-	DnsChallengeProvider challenge.Provider
+	PersistentDnsProvider bool
+	DnsChallengeProvider  challenge.Provider
 
 	// ACME Client, used mostly for testing.
 	AcmeHttpClient *http.Client
@@ -80,15 +81,16 @@ type elb struct {
 }
 
 // todo (mxplusb): prolly test this before the broker code.
-func NewManager(logger lager.Logger, iam iamiface.IAMAPI, cloudFront interfaces.CloudfrontDistributionIface, elbSvc elbv2iface.ELBV2API, settings types.Settings, db *gorm.DB) (RouteManager, error) {
+func NewManager(logger lager.Logger, iam iamiface.IAMAPI, cloudFront interfaces.CloudfrontDistributionIface, elbSvc elbv2iface.ELBV2API, settings types.Settings, db *gorm.DB, persistentDnsProvider bool) (RouteManager, error) {
 	r := RouteManager{
-		Logger:     logger,
-		IamSvc:     iam,
-		CloudFront: cloudFront,
-		Settings:   settings,
-		Db:         db,
-		ElbSvc:     elbSvc,
-		elbs:       make([]*elb, 0),
+		Logger:                logger,
+		IamSvc:                iam,
+		CloudFront:            cloudFront,
+		Settings:              settings,
+		Db:                    db,
+		ElbSvc:                elbSvc,
+		elbs:                  make([]*elb, 0),
+		PersistentDnsProvider: persistentDnsProvider,
 	}
 
 	// get a list of elbs.
@@ -159,6 +161,11 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 
 	if r.AcmeHttpClient == nil {
 		r.AcmeHttpClient = http.DefaultClient
+	}
+
+	// if we need to store the challenge for later upstream, create a new provider.
+	if r.PersistentDnsProvider == true {
+		r.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(r.Db, r.Logger, instanceId)
 	}
 
 	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.DnsChallengeProvider, r.Logger, instanceId)
@@ -658,7 +665,7 @@ func (r *RouteManager) Renew(route *models.DomainRoute) error {
 
 	// renew the certificate.
 
-	localCert := models.Certificate{InstanceId:route.InstanceId}
+	localCert := models.Certificate{InstanceId: route.InstanceId}
 
 	cert, err := acmeClient.Client.Certificate.Renew(*localCert.Resource, true, false)
 	if err != nil {
@@ -703,7 +710,7 @@ func (r *RouteManager) RenewAll() {
 
 		// renew the cert or skip from errors.
 
-		localCert := models.Certificate{InstanceId:localRoute.InstanceId}
+		localCert := models.Certificate{InstanceId: localRoute.InstanceId}
 
 		newCert, err := acmeClient.Certificate.Renew(*localCert.Resource, true, false)
 		if err != nil {

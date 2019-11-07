@@ -27,16 +27,17 @@ import (
 	"code.cloudfoundry.org/lager"
 )
 
+// todo (mxplusb): make this more cf friendly.
 func main() {
 	// before anything else, we need to grab our config so we know what to do.
 	var settings types.Settings
-	err := envconfig.Process("domainBroker", &settings)
+	err := envconfig.Process("", &settings)
 	if err != nil {
 		panic(err)
 	}
 
 	// now that we have our config, we can start instantiating.
-	logger := lager.NewLogger("domain-domainBroker")
+	logger := lager.NewLogger("domain-broker")
 
 	sink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
 	logger.RegisterSink(sink)
@@ -69,7 +70,8 @@ func main() {
 		},
 		elbv2.New(session),
 		settings,
-		db)
+		db,
+		true)
 	if err != nil {
 		loggerSession.Fatal("create-route-manager", err)
 
