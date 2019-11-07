@@ -191,12 +191,12 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 		s.T().Skip("skipping ProvisionDomainPlanWithDomainMessenger as it is a long test")
 	}
 
-	s.Gravel.Opts.AutoUpdateAuthZRecords = false
-	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger)
-
 	var (
 		serviceInstanceId = uuid.New()
 	)
+
+	s.Gravel.Opts.AutoUpdateAuthZRecords = false
+	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger, serviceInstanceId)
 
 	// test the domain plan.
 	d := domain.ProvisionDetails{
@@ -232,7 +232,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	// reset the configuration to let the DNS pass the authorization. since the record is already hashed, no need to
 	// have the server do it.
 	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = true
-	s.Gravel.Opts.DnsOpts.AlreadyHashed = true // todo (mxplusb): fix this logic in the challenge provider.
+	s.Gravel.Opts.DnsOpts.AlreadyHashed = true
 
 	// send the record to the dns server
 	s.Gravel.DnsServer.RecordsHandler <- dns.DnsMessage{
@@ -256,7 +256,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 }
 
 // todo (mxplusb): clean up test names
-func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleCertificates() {
+func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleSAN() {
 	b := s.Broker
 
 	var (
@@ -294,19 +294,18 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleCertif
 }
 
 // Test where DNS does not auto-present, a more realistic test.
-func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleCertificatesUsingTheDomainMessenger() {
-
+func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTheDomainMessenger() {
 	if testing.Short() {
-		s.T().Skip("skipping ProvisionDomainPlanWithMultipleCertificatesUsingTheDomainMessenger as it is a long test")
+		s.T().Skip("skipping ProvisionDomainPlanWithDomainMessenger as it is a long test")
 	}
-
-	s.Gravel.Opts.AutoUpdateAuthZRecords = false
-	oldProvider := s.Manager.DnsChallengeProvider
-	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger)
 
 	var (
 		serviceInstanceId = uuid.New()
 	)
+
+	s.Gravel.Opts.AutoUpdateAuthZRecords = false
+	s.Gravel.Opts.DnsOpts.AlreadyHashed = true
+	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger, serviceInstanceId)
 
 	// test the domain plan.
 	d := domain.ProvisionDetails{
@@ -317,36 +316,51 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleCertificat
 	// run in the background until we verify the DNS records exist in the DB, which is the equivalent of a user going
 	// and adding the TXT records of their DNS server. once we verify the records, this should continue in the
 	// background. we have to do this because otherwise it blocks.
-	go func() {
+	go func(s *BrokerSuite) {
 		res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
 		if err != nil {
 			s.Require().NoError(err, "provisioning should not throw an error")
 		}
 		s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
-	}()
+	}(s)
 
 	// sleep for a bit to let the cert get issues and the db store things.
 	time.Sleep(time.Second * 5)
 
-	localDomainMessenger := leproviders.DomainMessenger{
-		Domain: "test.service",
-	}
-	if err := s.DB.Where("domain = ?", localDomainMessenger.Domain).Find(&localDomainMessenger).Error; err != nil {
+	var localDomainMessengers []leproviders.DomainMessenger
+	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessengers).Error; err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
 	}
+	s.Require().Equal(3, len(localDomainMessengers), "there should be 3 domain authentication items")
 
-	s.Require().NotEmpty(localDomainMessenger.Domain, "domain value should not be empty")
-	s.Require().NotEmpty(localDomainMessenger.KeyAuth, "keyauth value should not be empty")
-	s.Require().NotEmpty(localDomainMessenger.Token, "domain token should not be empty")
+	for _, localDomainMessenger := range localDomainMessengers {
+		s.Require().NotEmpty(localDomainMessenger.Domain, "domain value should not be empty")
+		s.Require().NotEmpty(localDomainMessenger.KeyAuth, "keyauth value should not be empty")
+		s.Require().NotEmpty(localDomainMessenger.Token, "domain token should not be empty")
 
-	// reset the configuration to let the DNS pass the authorization.
-	s.Gravel.Opts.AutoUpdateAuthZRecords = true
+		s.Gravel.DnsServer.RecordsHandler <- dns.DnsMessage{
+			Domain: localDomainMessenger.Domain,
+			Token: localDomainMessenger.Token,
+			KeyAuth: localDomainMessenger.KeyAuth,
+		}
+	}
+
+	// reset the configuration to let the DNS pass the authorization. since the record is already hashed, no need to
+	// have the server do it.
+	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = true
 
 	// sleep for awhile until the client checks things normally.
-	time.Sleep(cfdomainbroker.DomainCreateCheck)
+	time.Sleep(cfdomainbroker.DomainCreateCheck * 2)
 
-	// reset the old dns provider.
-	s.Manager.DnsChallengeProvider = oldProvider
+	localCert := models.Certificate{
+		InstanceId: serviceInstanceId,
+	}
+	if err := s.DB.Where("instance_id = ?", localCert.InstanceId).Find(&localCert).Error; err != nil {
+		s.Require().NoError(err, "there should be no errors when querying the database for a provisioned certificate")
+	}
+
+	s.Require().NotEmpty(localCert.Certificate, "the certificate should not be empty")
+	s.Require().NotEmpty(localCert.PrivateKey, "the private key should not be empty")
 }
 
 func (s *BrokerSuite) TestDomainBroker_Deprovision() {

@@ -16,18 +16,20 @@ type AcmeClient struct {
 	Resolvers   map[string]string
 	DNSProvider challenge.Provider
 	AcmeConfig  *lego.Config
+	InstanceId  string
 
 	logger lager.Logger
 }
 
 // NewAcmeClient generates a new client with the target config.
-func NewAcmeClient(client *http.Client, resolvers map[string]string, config *lego.Config, provider challenge.Provider, logger lager.Logger) (*AcmeClient, error) {
+func NewAcmeClient(client *http.Client, resolvers map[string]string, config *lego.Config, provider challenge.Provider, logger lager.Logger, instanceId string) (*AcmeClient, error) {
 	a := &AcmeClient{
 		Resolvers:  resolvers,
 		AcmeConfig: config,
 		logger: logger.Session("acme-client", lager.Data{
 			"resolvers": resolvers,
 		}),
+		InstanceId: instanceId,
 	}
 
 	a.AcmeConfig.HTTPClient = client
@@ -49,6 +51,13 @@ func NewAcmeClient(client *http.Client, resolvers map[string]string, config *leg
 	a.logger.Debug("using-nameservers", lager.Data{
 		"nameservers": nameservers,
 	})
+
+	// if the implementation is our custom variant, set a required field.
+	switch v := provider.(type) {
+	case ServiceBrokerDNSProvider:
+		v.instanceId = instanceId
+	default:
+	}
 
 	if err = a.Client.Challenge.SetDNS01Provider(provider, dns01.AddRecursiveNameservers(nameservers), dns01.WrapPreCheck(a.preCheck)); err != nil {
 		a.logger.Error("acme-client-challenge-set-dns01-provider", err)
