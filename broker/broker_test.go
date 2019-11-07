@@ -17,6 +17,7 @@ import (
 	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/18f/gravel"
+	"github.com/18f/gravel/dns"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/jinzhu/gorm"
@@ -34,6 +35,7 @@ func TestBrokerSuite(t *testing.T) {
 // Mocks and such.
 type BrokerSuite struct {
 	suite.Suite
+	suite.SetupTestSuite
 	Broker   *DomainBroker
 	Manager  routes.RouteManager
 	Settings types.Settings
@@ -41,14 +43,14 @@ type BrokerSuite struct {
 	DB     *gorm.DB
 	Gravel *gravel.Gravel
 
-	logger lager.Logger
+	Logger lager.Logger
 }
 
 // This sets up the test suite before each test.
 func (s *BrokerSuite) SetupTest() {
 
 	var err error
-	s.DB, err = gorm.Open("sqlite3", ":memory:")
+	s.DB, err = gorm.Open("sqlite3", "/Users/kevinmlloyd/Development/go/workspace/cf-domain-broker/broker/testdata/test.db")
 	s.Require().NoError(err)
 
 	// set up the gravel test harness.
@@ -109,6 +111,7 @@ func (s *BrokerSuite) SetupTest() {
 	logger := lager.NewLogger("domain-broker-test")
 	logger.RegisterSink(testSink)
 	loggerSession := logger.Session("test-suite")
+	s.Logger = loggerSession
 	trmLogger := loggerSession.Session("test-route-manager")
 
 	s.Manager, err = routes.NewManager(
@@ -119,7 +122,7 @@ func (s *BrokerSuite) SetupTest() {
 		settings,
 		s.DB,
 	)
-	s.Manager.Dns = s.Gravel.DnsServer.Opts.Provider
+	s.Manager.DnsChallengeProvider = s.Gravel.DnsServer.Opts.Provider
 	s.Manager.AcmeHttpClient = s.Gravel.Client
 	s.Manager.Resolvers = map[string]string{"localhost": fmt.Sprintf("localhost:%d", s.Gravel.Opts.DnsOpts.DnsPort)}
 	s.Require().NoError(err)
@@ -127,7 +130,7 @@ func (s *BrokerSuite) SetupTest() {
 	s.Broker = NewDomainBroker(&s.Manager, trmLogger)
 }
 
-func (s *BrokerSuite) AfterTest(suiteName, testName string) {
+func (s *BrokerSuite) TearDownTest() {
 	// clear everything so it can be rebuilt on the next test.
 	s.Broker = &DomainBroker{}
 	s.Manager = routes.RouteManager{}
@@ -189,8 +192,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	}
 
 	s.Gravel.Opts.AutoUpdateAuthZRecords = false
-	oldProvider := s.Manager.Dns
-	s.Manager.Dns = leproviders.NewServiceBrokerDNSProvider(s.DB)
+	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger)
 
 	var (
 		serviceInstanceId = uuid.New()
@@ -205,13 +207,13 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	// run in the background until we verify the DNS records exist in the DB, which is the equivalent of a user going
 	// and adding the TXT records of their DNS server. once we verify the records, this should continue in the
 	// background. we have to do this because otherwise it blocks.
-	go func() {
+	go func(s *BrokerSuite) {
 		res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
 		if err != nil {
 			s.Require().NoError(err, "provisioning should not throw an error")
 		}
 		s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
-	}()
+	}(s)
 
 	// sleep for a bit to let the cert get issues and the db store things.
 	time.Sleep(time.Second * 5)
@@ -227,16 +229,33 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	s.Require().NotEmpty(localDomainMessenger.KeyAuth, "keyauth value should not be empty")
 	s.Require().NotEmpty(localDomainMessenger.Token, "domain token should not be empty")
 
-	// reset the configuration to let the DNS pass the authorization.
-	s.Gravel.Opts.AutoUpdateAuthZRecords = true
+	// reset the configuration to let the DNS pass the authorization. since the record is already hashed, no need to
+	// have the server do it.
+	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = true
+	s.Gravel.Opts.DnsOpts.AlreadyHashed = true // todo (mxplusb): fix this logic in the challenge provider.
+
+	// send the record to the dns server
+	s.Gravel.DnsServer.RecordsHandler <- dns.DnsMessage{
+		Domain: localDomainMessenger.Domain,
+		Token: localDomainMessenger.Token,
+		KeyAuth: localDomainMessenger.KeyAuth,
+	}
 
 	// sleep for awhile until the client checks things normally.
-	time.Sleep(cfdomainbroker.DomainCreateCheck)
+	time.Sleep(cfdomainbroker.DomainCreateCheck * 2)
+	
+	localCert := models.Certificate{
+		InstanceId: serviceInstanceId,
+	}
+	if err := s.DB.Where("instance_id = ?", localCert.InstanceId).Find(&localCert).Error; err != nil {
+		s.Require().NoError(err, "there should be no errors when querying the database for a provisioned certificate")
+	}
 
-	// reset the old dns provider.
-	s.Manager.Dns = oldProvider
+	s.Require().NotEmpty(localCert.Certificate, "the certificate should not be empty")
+	s.Require().NotEmpty(localCert.PrivateKey, "the private key should not be empty")
 }
 
+// todo (mxplusb): clean up test names
 func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleCertificates() {
 	b := s.Broker
 
@@ -282,8 +301,8 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleCertificat
 	}
 
 	s.Gravel.Opts.AutoUpdateAuthZRecords = false
-	oldProvider := s.Manager.Dns
-	s.Manager.Dns = leproviders.NewServiceBrokerDNSProvider(s.DB)
+	oldProvider := s.Manager.DnsChallengeProvider
+	s.Manager.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(s.DB, s.Logger)
 
 	var (
 		serviceInstanceId = uuid.New()
@@ -327,7 +346,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleCertificat
 	time.Sleep(cfdomainbroker.DomainCreateCheck)
 
 	// reset the old dns provider.
-	s.Manager.Dns = oldProvider
+	s.Manager.DnsChallengeProvider = oldProvider
 }
 
 func (s *BrokerSuite) TestDomainBroker_Deprovision() {
