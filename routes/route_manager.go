@@ -58,7 +58,7 @@ type RouteManager struct {
 	ElbSvc elbv2iface.ELBV2API
 
 	// dns challenger
-	Dns challenge.Provider
+	DnsChallengeProvider challenge.Provider
 
 	// ACME Client, used mostly for testing.
 	AcmeHttpClient *http.Client
@@ -157,7 +157,7 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	conf := lego.NewConfig(&user)
 	conf.CADirURL = r.Settings.AcmeUrl
 
-	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.Dns, r.Logger)
+	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.DnsChallengeProvider, r.Logger)
 	if err != nil {
 		lsession.Error("acme-new-client", err)
 		return &models.DomainRoute{}, err
@@ -385,7 +385,7 @@ func (r *RouteManager) Update(instanceId string, domainOpts types.DomainPlanOpti
 		conf.CADirURL = r.Settings.AcmeUrl
 		conf.HTTPClient = r.AcmeHttpClient
 
-		/*acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.Dns, r.Logger)
+		/*acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.DnsChallengeProvider, r.Logger)
 		if err != nil {
 			lsession.Error("acme-new-client", err)
 			return err
@@ -645,7 +645,7 @@ func (r *RouteManager) Renew(route *models.DomainRoute) error {
 	conf.CADirURL = r.Settings.AcmeUrl
 	//conf.HTTPClient = r.AcmeHttpClient
 
-	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.Dns, r.Logger)
+	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.DnsChallengeProvider, r.Logger)
 	if err != nil {
 		lsession.Error("acme-new-client", err)
 		return err
