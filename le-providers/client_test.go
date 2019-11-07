@@ -56,14 +56,15 @@ func (s *ClientSuite) SetupSuite() {
 	s.logger = lager.NewLogger("test")
 }
 
-func (s *ClientSuite) TestNewAcmeClient() {
+// todo (mxplusb): add better test.
+func (s *ClientSuite) TestNewAcmeWithoutClient() {
 
-	_, err := NewAcmeClient(nil, make(map[string]string), lego.NewConfig(s.user), ServiceBrokerDNSProvider{}, s.logger)
+	_, err := NewAcmeClient(nil, make(map[string]string), lego.NewConfig(s.user), ServiceBrokerDNSProvider{}, s.logger, "")
 	if err != nil {
 		s.Error(err, "error instantiating new acme client.")
 	}
 
-	//s.Require().NoError(err)
+	s.Require().Error(err, "there should be an error when building the lego client without an http client")
 }
 
 func (s *ClientSuite) TestNewAcmeClientWithHttpClient() {
@@ -81,7 +82,7 @@ func (s *ClientSuite) TestNewAcmeClientWithHttpClient() {
 		},
 	}
 
-	a, err := NewAcmeClient(client, make(map[string]string), lego.NewConfig(s.user), ServiceBrokerDNSProvider{}, s.logger)
+	a, err := NewAcmeClient(client, make(map[string]string), lego.NewConfig(s.user), ServiceBrokerDNSProvider{}, s.logger, "")
 	if err != nil {
 		s.Error(err, "error instantiating new acme client.")
 	}

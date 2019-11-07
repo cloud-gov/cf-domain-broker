@@ -157,6 +157,10 @@ func (r *RouteManager) Create(instanceId string, domainOpts types.DomainPlanOpti
 	conf := lego.NewConfig(&user)
 	conf.CADirURL = r.Settings.AcmeUrl
 
+	if r.AcmeHttpClient == nil {
+		r.AcmeHttpClient = http.DefaultClient
+	}
+
 	acmeClient, err := leproviders.NewAcmeClient(r.AcmeHttpClient, r.Resolvers, conf, r.DnsChallengeProvider, r.Logger, instanceId)
 	if err != nil {
 		lsession.Error("acme-new-client", err)

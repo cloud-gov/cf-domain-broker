@@ -11,6 +11,7 @@ import (
 	"github.com/pivotal-cf/brokerapi"
 )
 
+// todo (mxplusb): figure this out and how it's relevant
 func TestHTTPHandler(t *testing.T) {
 	brokerAPI := brokerapi.New(
 		&broker.DomainBroker{},

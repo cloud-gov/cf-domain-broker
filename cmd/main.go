@@ -8,6 +8,7 @@ import (
 
 	"github.com/18f/cf-domain-broker/broker"
 	"github.com/18f/cf-domain-broker/interfaces"
+	le_providers "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
@@ -29,13 +30,13 @@ import (
 func main() {
 	// before anything else, we need to grab our config so we know what to do.
 	var settings types.Settings
-	err := envconfig.Process("broker", &settings)
+	err := envconfig.Process("domainBroker", &settings)
 	if err != nil {
 		panic(err)
 	}
 
 	// now that we have our config, we can start instantiating.
-	logger := lager.NewLogger("domain-broker")
+	logger := lager.NewLogger("domain-domainBroker")
 
 	sink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
 	logger.RegisterSink(sink)
@@ -47,27 +48,33 @@ func main() {
 		loggerSession.Fatal("db-connection-builder", err)
 	}
 
-	/*cf, err := cfclient.NewClient(&cfclient.Config{
-		ApiAddress:   settings.APIAddress,
-		ClientID:     settings.ClientID,
-		ClientSecret: settings.ClientSecret,
-	})
-	if err != nil {
-		loggerSession.Fatal("cf-client-builder", err)
-	}*/
-
 	session := session.New(aws.NewConfig().WithRegion(settings.AwsDefaultRegion))
 
-	if err := db.AutoMigrate(&models.DomainRoute{}, &types.ALBProxy{}, &models.Certificate{}, &models.UserData{}).Error; err != nil {
+	if err := db.AutoMigrate(&models.DomainRoute{},
+		&models.UserData{},
+		&models.Domain{},
+		&models.Certificate{},
+		&le_providers.DomainMessenger{}).Error; err != nil {
 		loggerSession.Fatal("db-auto-migrate", err)
 	}
 
 	rms := loggerSession.Session("route-manager")
-	routeManager, err := routes.NewManager(rms, types.IAM{Settings: settings, Service: iam.New(session)}.Service, &interfaces.CloudfrontDistribution{settings, cloudfront.New(session)}, elbv2.New(session), settings, db)
+	routeManager, err := routes.NewManager(rms,
+		types.IAM{
+			Settings: settings,
+			Service:  iam.New(session)}.Service,
+		&interfaces.CloudfrontDistribution{
+			Settings: settings,
+			Service:  cloudfront.New(session),
+		},
+		elbv2.New(session),
+		settings,
+		db)
 	if err != nil {
 		loggerSession.Fatal("create-route-manager", err)
+
 	}
-	broker := broker.NewDomainBroker(&routeManager, loggerSession)
+	domainBroker := broker.NewDomainBroker(&routeManager, loggerSession)
 
 	credentials := brokerapi.BrokerCredentials{
 		Username: settings.BrokerUsername,
@@ -78,7 +85,7 @@ func main() {
 		logger.Fatal("populate", err)
 	}
 
-	brokerAPI := brokerapi.New(broker, logger, credentials)
+	brokerAPI := brokerapi.New(domainBroker, logger, credentials)
 	server := bindHTTPHandlers(brokerAPI, settings)
 	http.ListenAndServe(fmt.Sprintf(":%s", settings.Port), server)
 }
