@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"code.cloudfoundry.org/lager"
-	cf_domain_broker "github.com/18f/cf-domain-broker"
-	"github.com/18f/cf-domain-broker/interfaces"
-	le_providers "github.com/18f/cf-domain-broker/le-providers"
+	cfdomainbroker "github.com/18f/cf-domain-broker"
+	leproviders "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/types"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/service/cloudfront/cloudfrontiface"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -24,25 +28,33 @@ import (
 	"github.com/go-acme/lego/v3/registration"
 	"github.com/jinzhu/gorm"
 	"github.com/pivotal-cf/brokerapi/domain"
+	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
 )
 
 type WorkerManagerSettings struct {
-	AcmeHttpClient        *http.Client
-	AcmeUrl               string
-	AcmeEmail             string
-	Db                    *gorm.DB
-	IamSvc                iamiface.IAMAPI
-	CloudFront            interfaces.CloudfrontDistributionIface
-	ElbSvc                elbv2iface.ELBV2API
-	PersistentDnsProvider bool
-	DnsChallengeProvider  challenge.Provider
-	Resolvers             map[string]string
-	LogLevel              int
+	AutostartWorkerPool         bool
+	AcmeHttpClient              *http.Client
+	AcmeUrl                     string
+	AcmeEmail                   string
+	Db                          *gorm.DB
+	IamSvc                      iamiface.IAMAPI
+	CloudFront                  cloudfrontiface.CloudFrontAPI
+	ElbSvc                      elbv2iface.ELBV2API
+	ElbUpdateFrequencyInSeconds time.Duration
+	PersistentDnsProvider       bool
+	DnsChallengeProvider        challenge.Provider
+	Resolvers                   map[string]string
+	Logger                      lager.Logger
+	LogLevel                    int
 }
 
+// The Worker Manager is designed to be a totally asynchronous, message-driven interface on behalf of the Service Broker
+// API. It has two interface points: `RequestRouter` and `GetLastError()`. `RequestRouter` is designed to handle any
+// type of incoming request. `GetLastError()` will return the most recent unseen error related to the service instance
+// requested.
 type WorkerManager struct {
-	Settings                    *WorkerManagerSettings
 	RequestRouter               chan interface{}
+	settings                    *WorkerManagerSettings
 	provisionRequest            chan ProvisionRequest
 	deprovisionRequest          chan DeprovisionRequest
 	getInstanceRequest          chan GetInstanceRequest
@@ -52,15 +64,26 @@ type WorkerManager struct {
 	unbindRequest               chan UnbindRequest
 	getBindingRequest           chan GetBindingRequest
 	lastBindingOperationRequest chan LastBindingOperationRequest
+	dnsInstructionsRequest      chan DnsInstructionsRequest
 
-	logger lager.Logger
+	provisioningErrorMap   map[string]error
+	deprovisioningErrorMap map[string]error
+	elbs                   []*elb
+	logger                 lager.Logger
 }
 
-func NewWorkerManager(logger lager.Logger, settings *WorkerManagerSettings) *WorkerManager {
+type elb struct {
+	lb              *elbv2.LoadBalancer
+	certsOnListener int
+}
+
+func NewWorkerManager(settings *WorkerManagerSettings) *WorkerManager {
 	p := &WorkerManager{
 		RequestRouter:               make(chan interface{}, 150),
-		Settings:                    settings,
-		logger:                      logger,
+		settings:                    settings,
+		logger:                      settings.Logger.Session("worker-manager"),
+		provisioningErrorMap:        make(map[string]error),
+		deprovisioningErrorMap:      make(map[string]error),
 		provisionRequest:            make(chan ProvisionRequest, 150),
 		deprovisionRequest:          make(chan DeprovisionRequest, 150),
 		getInstanceRequest:          make(chan GetInstanceRequest, 150),
@@ -70,97 +93,171 @@ func NewWorkerManager(logger lager.Logger, settings *WorkerManagerSettings) *Wor
 		unbindRequest:               make(chan UnbindRequest, 150),
 		getBindingRequest:           make(chan GetBindingRequest, 150),
 		lastBindingOperationRequest: make(chan LastBindingOperationRequest, 150),
+		dnsInstructionsRequest:      make(chan DnsInstructionsRequest, 150),
+	}
+
+	if p.settings.AutostartWorkerPool {
+		p.Run()
 	}
 
 	return p
 }
 
-func (p *WorkerManager) Run() {
+// Runs the worker pool. Can be automatically invoked via a setting with `NewWorkerManager`.
+// todo (mxplusb): leverage the runners to enable and disable SB functionality.
+// todo (mxplusb): figure out a `Stop()` story.
+func (w *WorkerManager) Run() {
 	// start the background router.
 	go func() {
 		for {
-			msg := <-p.RequestRouter
+			msg := <-w.RequestRouter
 			switch msg.(type) {
 			case ProvisionRequest:
-				p.provisionRequest <- msg.(ProvisionRequest)
+				w.provisionRequest <- msg.(ProvisionRequest)
+			case GetInstanceRequest:
+				w.getInstanceRequest <- msg.(GetInstanceRequest)
+			case DnsInstructionsRequest:
+				w.dnsInstructionsRequest <- msg.(DnsInstructionsRequest)
+			case LastOperationRequest:
+				w.lastOperationRequest <- msg.(LastOperationRequest)
+			case DeprovisionRequest:
+				w.deprovisionRequest <- msg.(DeprovisionRequest)
 			}
 		}
 	}()
 
-	// start the provisioning listener
-	go p.RunProvisioner()
+	ticker := time.NewTicker(w.settings.ElbUpdateFrequencyInSeconds * time.Second)
+
+	// background function to keep the internal elb certs on listener up to date.
+	// runs every so often.
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				// get a list of elbs.
+				resp, err := w.settings.ElbSvc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{})
+				if err != nil {
+					w.logger.Error("describe-load-balancers", err)
+				}
+				for idx := range resp.LoadBalancers {
+					// nil check because you have to every single time you do anything in aws...
+					if resp.LoadBalancers[idx] != nil {
+						lresp, err := w.settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
+							LoadBalancerArn: resp.LoadBalancers[idx].LoadBalancerArn,
+						})
+						if err != nil {
+							w.logger.Error("describe-elb-listeners", err, lager.Data{
+								"elb-target-arn": resp.LoadBalancers[idx].LoadBalancerArn,
+							})
+						}
+
+						var certsOnListener int
+						for nidx := range lresp.Listeners {
+							if lresp.Listeners[nidx] != nil {
+								certsOnListener += len(lresp.Listeners[nidx].Certificates)
+							}
+						}
+
+						w.elbs = append(w.elbs, &elb{lb: resp.LoadBalancers[idx], certsOnListener: certsOnListener})
+					}
+				}
+			}
+		}
+	}()
+
+	// start our listeners/runners
+	w.provisionRunner()
+	w.getInstanceRunner()
+	w.lastOperationRunner()
+	w.dnsInstructionsRunner()
+	w.deprovisionRunner()
 }
 
 type ProvisionRequest struct {
-	Context      context.Context
-	InstanceId   string
-	DomainOpts   types.DomainPlanOptions
-	CdnOpts      types.CdnPlanOptions
-	Tags         map[string]string
-	LoadBalancer *elbv2.LoadBalancer
+	Context    context.Context
+	InstanceId string
+	DomainOpts types.DomainPlanOptions
+	CdnOpts    types.CdnPlanOptions
+	Tags       map[string]string
 }
 
-func (p *WorkerManager) RunProvisioner() {
+func (w *WorkerManager) provisionRunner() {
 	go func() {
 		for {
-			msg := <-p.provisionRequest
-			go p.provision(msg)
+			msg := <-w.provisionRequest
+			go w.provision(msg)
 		}
 	}()
 }
 
-func (p *WorkerManager) provision(msg ProvisionRequest) {
-	lsession := p.logger.Session("create-route", lager.Data{
+func (w *WorkerManager) provision(msg ProvisionRequest) {
+	lsession := w.logger.Session("create-route", lager.Data{
 		"instance-id": msg.InstanceId,
 		"domains":     msg.DomainOpts.Domains,
 	})
-
-	defer func(lsession lager.Logger) {
-		if r := recover(); r != nil {
-			err := errors.New(fmt.Sprintln(r))
-			lsession.Error("panic!", err)
-		}
-	}(lsession)
 
 	// generate a new key.
 	key, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		lsession.Error("rsa-generate-key", err)
+		w.provisioningErrorMap[msg.InstanceId] = err
+		return
 	}
 	lsession.Debug("rsa-key-generated")
 
 	// build the user with the new key, instantiate a client
 	user := models.UserData{
-		Email:      p.Settings.AcmeEmail,
+		Email:      w.settings.AcmeEmail,
 		PublicKey:  key.Public(),
 		PrivateKey: key,
 	}
 
 	conf := lego.NewConfig(&user)
-	conf.CADirURL = p.Settings.AcmeUrl
+	conf.CADirURL = w.settings.AcmeUrl
 
-	if p.Settings.AcmeHttpClient == nil {
-		p.Settings.AcmeHttpClient = http.DefaultClient
+	if w.settings.AcmeHttpClient == nil {
+		w.settings.AcmeHttpClient = http.DefaultClient
 	}
 
 	// if we need to store the challenge for later upstream, create a new provider.
-	if p.Settings.PersistentDnsProvider == true {
-		p.Settings.DnsChallengeProvider = le_providers.NewServiceBrokerDNSProvider(p.Settings.Db, p.logger, msg.InstanceId)
+	if w.settings.PersistentDnsProvider == true {
+		w.settings.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(w.settings.Db, w.logger, msg.InstanceId)
 	}
 
-	acmeClient, err := le_providers.NewAcmeClient(p.Settings.AcmeHttpClient, p.Settings.Resolvers, conf, p.Settings.DnsChallengeProvider, p.logger, msg.InstanceId)
+	acmeClient, err := leproviders.NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
 	if err != nil {
-		// todo (mxplusb): figure out how to bubble this up
 		lsession.Error("acme-new-client", err)
+		w.provisioningErrorMap[msg.InstanceId] = err
+		return
 	}
 	lsession.Debug("acme-client-instantiated")
+
+	// find the least assigned ELB to assign the route to.
+	var targetElb *elbv2.LoadBalancer
+	leastAssigned := 0
+	for idx := range w.elbs {
+		if w.elbs[idx].certsOnListener >= leastAssigned {
+			targetElb = w.elbs[idx].lb
+			leastAssigned = w.elbs[idx].certsOnListener
+		}
+	}
+
+	if targetElb == nil {
+		lsession.Error("desired-lb-nil-reference", errors.New("nil pointer dereference"))
+		w.provisioningErrorMap[msg.InstanceId] = err
+		return
+	}
+
+	lsession.Info("least-assigned-found", lager.Data{
+		"elb-target": &targetElb.LoadBalancerArn,
+	})
 
 	if len(msg.DomainOpts.Domains) > 0 {
 		lsession.Debug("acme-dns-provider-assigned")
 		// create the route struct and add the user reference.
 		localDomainRoute := &models.DomainRoute{
 			InstanceId:     msg.InstanceId,
-			State:          cf_domain_broker.Provisioning,
+			State:          cfdomainbroker.Provisioning,
 			User:           user,
 			DomainExternal: msg.DomainOpts.Domains,
 		}
@@ -174,15 +271,17 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 
 		// store the certificate and elb info the database.
 		// check for debug.
-		if p.Settings.LogLevel == 1 {
-			if err := p.Settings.Db.Debug().Create(&localDomainRoute).Error; err != nil {
-				// todo (mxplusb): figure out how to bubble this up
+		if w.settings.LogLevel == 1 {
+			if err := w.settings.Db.Debug().Create(&localDomainRoute).Error; err != nil {
 				lsession.Error("db-debug-save-route", err)
+				w.provisioningErrorMap[msg.InstanceId] = err
+				return
 			}
 		} else {
-			if err := p.Settings.Db.Create(&localDomainRoute).Error; err != nil {
-				// todo (mxplusb): figure out how to bubble this up
+			if err := w.settings.Db.Create(&localDomainRoute).Error; err != nil {
 				lsession.Error("db-save-route", err)
+				w.provisioningErrorMap[msg.InstanceId] = err
+				return
 			}
 		}
 		lsession.Info("db-route-saved")
@@ -201,8 +300,9 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 		// get the certificate.
 		cert, err := acmeClient.Client.Certificate.Obtain(request)
 		if err != nil {
-			// todo (mxplusb): figure out how to bubble this up
 			lsession.Error("acme-certificate-obtain", err)
+			w.provisioningErrorMap[msg.InstanceId] = err
+			return
 		}
 		lsession.Info("certificate-obtained")
 
@@ -211,21 +311,23 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 			Resource:   cert,
 		}
 
-		if p.Settings.LogLevel == 1 {
-			if err := p.Settings.Db.Debug().Create(&localCert).Error; err != nil {
-				// todo (mxplusb): figure out how to bubble this up
+		if w.settings.LogLevel == 1 {
+			if err := w.settings.Db.Debug().Create(&localCert).Error; err != nil {
 				lsession.Error("db-save-certificate", err)
+				w.provisioningErrorMap[msg.InstanceId] = err
+				return
 			}
 		} else {
-			if err := p.Settings.Db.Create(&localCert).Error; err != nil {
-				// todo (mxplusb): figure out how to bubble this up
+			if err := w.settings.Db.Create(&localCert).Error; err != nil {
 				lsession.Error("db-save-certificate", err)
+				w.provisioningErrorMap[msg.InstanceId] = err
+				return
 			}
 		}
 		lsession.Info("db-certificate-stored")
 
 		// save the ELB arn.
-		localDomainRoute.ELBArn = *msg.LoadBalancer.LoadBalancerArn
+		localDomainRoute.ELBArn = *targetElb.LoadBalancerArn
 
 		// generate the necessary input.
 		certUploadInput := &iam.UploadServerCertificateInput{}
@@ -234,10 +336,11 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 		certUploadInput.SetServerCertificateName(fmt.Sprintf("cf-domain-%s", msg.InstanceId))
 
 		// upload the certificate.
-		certArn, err := p.Settings.IamSvc.UploadServerCertificate(certUploadInput)
+		certArn, err := w.settings.IamSvc.UploadServerCertificate(certUploadInput)
 		if err != nil {
-			// todo (mxplusb): figure out how to bubble this up
 			lsession.Error("iam-upload-server-certificate", err)
+			w.provisioningErrorMap[msg.InstanceId] = err
+			return
 		}
 		lsession.Info("certificate-uploaded-to-iam")
 
@@ -245,12 +348,13 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 		localCert.ARN = *certArn.ServerCertificateMetadata.Arn
 
 		// grab the listeners.
-		listeners, err := p.Settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
-			LoadBalancerArn: msg.LoadBalancer.LoadBalancerArn,
+		listeners, err := w.settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
+			LoadBalancerArn: targetElb.LoadBalancerArn,
 		})
 		if err != nil {
-			// todo (mxplusb): figure out how to bubble this up
 			lsession.Error("elbsvc-describe-listeners", err)
+			w.provisioningErrorMap[msg.InstanceId] = err
+			return
 		}
 		lsession.Debug("found-listeners", lager.Data{
 			"listeners": listeners.Listeners,
@@ -269,8 +373,9 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 			localDomainRoute.ListenerArn = *targetListenArn
 		} else {
 			err := errors.New("missing listener arn")
-			// todo (mxplusb): figure out how to bubble this up
 			lsession.Error("listener-arn-is-nil", err)
+			w.provisioningErrorMap[msg.InstanceId] = err
+			return
 		}
 
 		lsession.Debug("found-https-listener", lager.Data{
@@ -278,7 +383,7 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 		})
 
 		// upload the certificate to the listener.
-		if _, err := p.Settings.ElbSvc.AddListenerCertificates(&elbv2.AddListenerCertificatesInput{
+		if _, err := w.settings.ElbSvc.AddListenerCertificates(&elbv2.AddListenerCertificatesInput{
 			ListenerArn: targetListenArn,
 			Certificates: []*elbv2.Certificate{
 				{
@@ -286,61 +391,242 @@ func (p *WorkerManager) provision(msg ProvisionRequest) {
 				},
 			},
 		}); err != nil {
-			// todo (mxplusb): figure out how to bubble this up
 			lsession.Error("elbsvc-add-listener-certificates", err)
+			w.provisioningErrorMap[msg.InstanceId] = err
+			return
 		}
 		lsession.Info("certificate-uploaded-to-elb")
 
 		// since it's been uploaded to the elb, it's done.
-		localDomainRoute.State = cf_domain_broker.Provisioned
+		localDomainRoute.State = cfdomainbroker.Provisioned
 
 		// store the certificate and elb info the database.
-		if err := p.Settings.Db.Save(localDomainRoute).Error; err != nil {
-			// todo (mxplusb): figure out how to bubble this up
+		if err := w.settings.Db.Save(localDomainRoute).Error; err != nil {
 			lsession.Error("db-save-route", err)
+			w.provisioningErrorMap[msg.InstanceId] = err
+			return
 		}
 
-	} else if len(msg.CdnOpts.Domain) > 0 {
-		// create the route struct and add the user reference.
-		var domain models.Domain
-		domain.Value = msg.CdnOpts.Domain
-		var domains []models.Domain
-		domains = append(domains, domain)
-
-		localCDNRoute := &models.DomainRoute{
-			InstanceId:     msg.InstanceId,
-			State:          cf_domain_broker.Provisioning,
-			User:           user,
-			DomainExternal: domains,
-			Origin:         msg.CdnOpts.Origin,
-			Path:           msg.CdnOpts.Path,
-			InsecureOrigin: msg.CdnOpts.InsecureOrigin,
-		}
-
-		dist, err := p.Settings.CloudFront.Create(msg.InstanceId, make([]string, 0), msg.CdnOpts.Origin, msg.CdnOpts.Path, msg.CdnOpts.InsecureOrigin, msg.CdnOpts.Headers, msg.CdnOpts.Cookies, msg.Tags)
-		if err != nil {
-			// todo (mxplusb): figure out how to bubble this up
-			lsession.Error("creating-cloudfront-instance", err)
-		}
-
-		localCDNRoute.DomainInternal = *dist.DomainName
-		localCDNRoute.DistributionId = *dist.Id
-
-		if err := p.Settings.Db.Create(localCDNRoute).Error; err != nil {
-			// todo (mxplusb): figure out how to bubble this up
-			lsession.Error("db-creating-route", err)
-		}
 	}
+	//else if len(msg.CdnOpts.Domain) > 0 {
+	//	// create the route struct and add the user reference.
+	//	var domain models.Domain
+	//	domain.Value = msg.CdnOpts.Domain
+	//	var domains []models.Domain
+	//	domains = append(domains, domain)
+	//
+	//	localCDNRoute := &models.DomainRoute{
+	//		InstanceId:     msg.InstanceId,
+	//		State:          cfdomainbroker.Provisioning,
+	//		User:           user,
+	//		DomainExternal: domains,
+	//		Origin:         msg.CdnOpts.Origin,
+	//		Path:           msg.CdnOpts.Path,
+	//		InsecureOrigin: msg.CdnOpts.InsecureOrigin,
+	//	}
+	//
+	//	dist, err := w.settings.CloudFront.Create(msg.InstanceId, make([]string, 0), msg.CdnOpts.Origin, msg.CdnOpts.Path, msg.CdnOpts.InsecureOrigin, msg.CdnOpts.Headers, msg.CdnOpts.Cookies, msg.Tags)
+	//	if err != nil {
+	//		lsession.Error("creating-cloudfront-instance", err)
+	//		w.provisioningErrorMap[msg.InstanceId] = err
+	//		return
+	//	}
+	//
+	//	localCDNRoute.DomainInternal = *dist.DomainName
+	//	localCDNRoute.DistributionId = *dist.Id
+	//
+	//	if err := w.settings.Db.Create(localCDNRoute).Error; err != nil {
+	//		lsession.Error("db-creating-route", err)
+	//		w.provisioningErrorMap[msg.InstanceId] = err
+	//		return
+	//	}
+	//}
 }
 
 type DeprovisionRequest struct {
-	Context    context.Context
-	InstanceId string
+	Context      context.Context
+	InstanceId   string
+	Details      domain.DeprovisionDetails
+	AsyncAllowed bool
+	Response     chan<- DeprovisionResponse
 }
 
+type DeprovisionResponse struct {
+	Spec  domain.DeprovisionServiceSpec
+	Error error
+}
+
+func (w *WorkerManager) deprovisionRunner() {
+	go func() {
+		for {
+			msg := <-w.deprovisionRequest
+			go w.deprovision(msg, msg.Response)
+		}
+	}()
+}
+
+func (w *WorkerManager) deprovision(msg DeprovisionRequest, resp chan<- DeprovisionResponse) {
+
+	localResp := DeprovisionResponse{}
+
+	getInstanceRespc := make(chan GetInstanceResponse, 1)
+	w.getInstanceRequest <- GetInstanceRequest{
+		Context:    msg.Context,
+		InstanceId: msg.InstanceId,
+		Response:   getInstanceRespc,
+	}
+
+	getInstanceResponse := <-getInstanceRespc
+	getInstanceResponse.Route.State = cfdomainbroker.Deprovisioning
+	if err := w.settings.Db.Update(&getInstanceResponse).Error; err != nil {
+		w.deprovisioningErrorMap[msg.InstanceId] = err
+		return
+	}
+
+	lsession := w.logger.Session("worker-manager-deprovision", lager.Data{
+		"instance-id":  msg.InstanceId,
+		"listener-arn": getInstanceResponse.Route.ListenerArn,
+	})
+
+	var localCert models.Certificate
+	result := w.settings.Db.First(&localCert, &models.Certificate{InstanceId: msg.InstanceId})
+
+	if result.RecordNotFound() {
+		lsession.Error("db-certificate-not-found", result.Error)
+		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+		return
+	} else if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+		return
+	}
+
+	lsession.Info("disabling-route")
+
+	var localRoute models.DomainRoute
+	result = w.settings.Db.First(&localRoute, &models.DomainRoute{InstanceId: msg.InstanceId})
+
+	if result.RecordNotFound() {
+		lsession.Error("db-route-not-found", result.Error)
+		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+		return
+	} else if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+		return
+	}
+
+	if _, err := w.settings.ElbSvc.RemoveListenerCertificates(&elbv2.RemoveListenerCertificatesInput{
+		ListenerArn: aws.String(getInstanceResponse.Route.ListenerArn),
+		Certificates: []*elbv2.Certificate{
+			{CertificateArn: aws.String(localCert.ARN)},
+		},
+	}); err != nil {
+		w.deprovisioningErrorMap[msg.InstanceId] = err
+		return
+	}
+
+	for {
+		w.logger.Info("deleting-cert-from-iam")
+		if _, err := w.settings.IamSvc.DeleteServerCertificate(&iam.DeleteServerCertificateInput{
+			ServerCertificateName: aws.String(msg.InstanceId),
+		}); err != nil {
+			if aerr, ok := err.(awserr.Error); ok {
+				if aerr.Code() == iam.ErrCodeDeleteConflictException {
+					time.Sleep(1 * time.Second)
+					continue
+				}
+			}
+		}
+		break
+	}
+
+	result = w.settings.Db.Delete(&localCert)
+
+	if result.RecordNotFound() {
+		lsession.Error("db-certificate-not-found", result.Error)
+		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+		return
+	} else if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+		return
+	}
+
+	// keep the old service instance around, but mark it as deprovisioned.
+	localRoute.State = cfdomainbroker.Deprovisioned
+	result = w.settings.Db.Update(&localRoute)
+
+	if result.Error != nil {
+		lsession.Error("db-generic-error", result.Error)
+		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+		return
+	}
+
+	resp <- localResp
+}
+
+// Gets a specific service instance.
 type GetInstanceRequest struct {
 	Context    context.Context
 	InstanceId string
+	Response   chan<- GetInstanceResponse
+}
+
+type GetInstanceResponse struct {
+	Route models.DomainRoute
+	Error error
+}
+
+func (w *WorkerManager) getInstanceRunner() {
+	go func() {
+		for {
+			msg := <-w.getInstanceRequest
+			go w.getInstance(msg, msg.Response)
+		}
+	}()
+}
+
+func (w *WorkerManager) getInstance(msg GetInstanceRequest, resp chan<- GetInstanceResponse) {
+	lsession := w.logger.Session("get-instance")
+
+	localResp := GetInstanceResponse{
+		Error: nil,
+	}
+
+	// if the instance id is in the provisioning error map, then there was a certificate provisioning error and we
+	// need to surface it
+	if err, ok := w.provisioningErrorMap[msg.InstanceId]; ok {
+		localResp.Error = err
+		resp <- localResp
+		return
+	}
+
+	// if the instance id is in the deprovisioning error map, then there was a deprovisioning error and we need to
+	// surface it
+	if err, ok := w.deprovisioningErrorMap[msg.InstanceId]; ok {
+		localResp.Error = err
+		resp <- localResp
+		return
+	}
+
+	var localRoute models.DomainRoute
+	result := w.settings.Db.First(&localRoute, &models.DomainRoute{InstanceId: msg.InstanceId})
+	if result.RecordNotFound() {
+		lsession.Error("db-record-not-found", apiresponses.ErrInstanceDoesNotExist)
+		localResp.Error = result.Error
+		resp <- localResp
+		return
+	} else if result.Error != nil {
+		lsession.Error("db-get-first-route", result.Error)
+		localResp.Error = result.Error
+		resp <- localResp
+		return
+	}
+
+	localResp.Route = localRoute
+
+	resp <- localResp
 }
 
 type UpdateRequest struct {
@@ -352,6 +638,7 @@ type LastOperationRequest struct {
 	Context    context.Context
 	InstanceId string
 	Details    domain.PollDetails
+	Response   chan<- LastOperationResponse
 }
 
 type LastOperationResponse struct {
@@ -359,62 +646,139 @@ type LastOperationResponse struct {
 	Error         error
 }
 
-func (p *WorkerManager) LastOperation(resp <-chan LastOperationResponse) {
-	panic("implement me")
+func (w *WorkerManager) lastOperationRunner() {
+	go func() {
+		for {
+			msg := <-w.lastOperationRequest
+			go w.lastOperation(msg, msg.Response)
+		}
+	}()
 }
 
-type BindRequest struct {
+func (w *WorkerManager) lastOperation(msg LastOperationRequest, resp chan<- LastOperationResponse) {
+	lsession := w.logger.Session("poll", lager.Data{
+		"instance-id": msg.InstanceId,
+	})
+
+	respc := make(chan GetInstanceResponse, 1)
+	w.getInstanceRequest <- GetInstanceRequest{
+		Context:    msg.Context,
+		InstanceId: msg.InstanceId,
+		Response:   respc,
+	}
+
+	getInstanceResponse := <-respc
+	localResp := LastOperationResponse{
+		Error: nil,
+	}
+
+	// basically, if there is an asynchronous error, surface it here.
+	if getInstanceResponse.Error != nil {
+		localResp.Error = getInstanceResponse.Error
+		resp <- localResp
+		return
+	}
+
+	switch getInstanceResponse.Route.State {
+	case cfdomainbroker.Provisioning:
+		lsession.Info("check-provisioning")
+
+		innerLocalRespc := make(chan DnsInstructionsResponse, 1)
+		w.dnsInstructionsRequest <- DnsInstructionsRequest{
+			Context:    msg.Context,
+			InstanceId: msg.InstanceId,
+			Response:   innerLocalRespc,
+		}
+		innerLocalResp := <-innerLocalRespc
+
+		var sb strings.Builder
+		for idx := range innerLocalResp.Messenger {
+			if _, err := fmt.Fprint(&sb, innerLocalResp.Messenger[idx].String()); err != nil {
+				lsession.Error("string-builder-fprint", err)
+			}
+		}
+
+		localResp.LastOperation = domain.LastOperation{
+			State:       domain.InProgress,
+			Description: sb.String(),
+		}
+		resp <- localResp
+	case cfdomainbroker.Deprovisioning:
+		lsession.Info("check-deprovisioning")
+
+		localResp.LastOperation = domain.LastOperation{
+			State:       domain.InProgress,
+			Description: "",
+		}
+		resp <- localResp
+	}
+}
+
+type DnsInstructionsRequest struct {
 	Context    context.Context
 	InstanceId string
+	Response   chan<- DnsInstructionsResponse
 }
 
+type DnsInstructionsResponse struct {
+	Messenger []leproviders.DomainMessenger
+	Error     error
+}
+
+func (w *WorkerManager) dnsInstructionsRunner() {
+	go func() {
+		for {
+			msg := <-w.dnsInstructionsRequest
+			go w.getDnsInstructions(msg, msg.Response)
+		}
+	}()
+}
+
+func (w *WorkerManager) getDnsInstructions(msg DnsInstructionsRequest, resp chan<- DnsInstructionsResponse) {
+	lsession := w.logger.Session("get-dns-instructions", lager.Data{
+		"instance-id": msg.InstanceId,
+	})
+
+	localResp := DnsInstructionsResponse{
+		Error: nil,
+	}
+
+	var domainMessage []leproviders.DomainMessenger
+	if err := w.settings.Db.Where("instance_id = ?", msg.InstanceId).Find(&domainMessage).Error; err != nil {
+		lsession.Error("db-find-dns-instructions", err)
+		localResp.Error = err
+		resp <- localResp
+		return
+	}
+	lsession.Info("found-domain-auth-instructions")
+
+	localResp.Messenger = domainMessage
+	resp <- localResp
+}
+
+// Not Implemented
+type BindRequest struct {
+	Context      context.Context
+	InstanceId   string
+	BindingId    string
+	Details      domain.BindDetails
+	AsyncAllowed bool
+}
+
+// Not Implemented
 type UnbindRequest struct {
 	Context    context.Context
 	InstanceId string
 }
 
+// Not Implemented
 type GetBindingRequest struct {
 	Context    context.Context
 	InstanceId string
 }
 
+// Not Implemented
 type LastBindingOperationRequest struct {
 	Context    context.Context
 	InstanceId string
-}
-
-func (p WorkerManager) Services(ctx context.Context) ([]domain.Service, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) Provision(ctx context.Context, instanceID string, details domain.ProvisionDetails, asyncAllowed bool) (domain.ProvisionedServiceSpec, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) Deprovision(ctx context.Context, instanceID string, details domain.DeprovisionDetails, asyncAllowed bool) (domain.DeprovisionServiceSpec, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) GetInstance(ctx context.Context, instanceID string) (domain.GetInstanceDetailsSpec, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) Update(ctx context.Context, instanceID string, details domain.UpdateDetails, asyncAllowed bool) (domain.UpdateServiceSpec, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) Bind(ctx context.Context, instanceID, bindingID string, details domain.BindDetails, asyncAllowed bool) (domain.Binding, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) Unbind(ctx context.Context, instanceID, bindingID string, details domain.UnbindDetails, asyncAllowed bool) (domain.UnbindSpec, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) GetBinding(ctx context.Context, instanceID, bindingID string) (domain.GetBindingSpec, error) {
-	panic("implement me")
-}
-
-func (p WorkerManager) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
-	panic("implement me")
 }

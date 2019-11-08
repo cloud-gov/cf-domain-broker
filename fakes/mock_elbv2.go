@@ -35,7 +35,7 @@ func (elb *MockELBV2API) Arner(name string) string {
 func (elb *MockELBV2API) AddListenerCertificates(input *elbv2.AddListenerCertificatesInput) (*elbv2.AddListenerCertificatesOutput, error) {
 	var lelb *elbv2.Listener = nil
 
-	for idx, _ := range elb.Listeners {
+	for idx := range elb.Listeners {
 		if elb.Listeners[idx].ListenerArn == input.ListenerArn {
 			elb.Listeners[idx].Certificates = append(elb.Listeners[idx].Certificates, input.Certificates...)
 			lelb = elb.Listeners[idx]
@@ -234,7 +234,7 @@ func (elb *MockELBV2API) DescribeListeners(input *elbv2.DescribeListenersInput) 
 
 	// if we're looking for specific arns
 	if input.LoadBalancerArn != nil {
-		for idx, _ := range elb.Listeners {
+		for idx := range elb.Listeners {
 			if elb.Listeners[idx].LoadBalancerArn == input.LoadBalancerArn {
 				listeners = append(listeners, elb.Listeners[idx])
 			}
@@ -283,8 +283,8 @@ func (elb *MockELBV2API) DescribeLoadBalancers(input *elbv2.DescribeLoadBalancer
 
 	// if we're looking for specific arns
 	if len(input.LoadBalancerArns) > 0 {
-		for idx, _ := range input.LoadBalancerArns {
-			for nidx, _ := range elb.LoadBalancers {
+		for idx := range input.LoadBalancerArns {
+			for nidx := range elb.LoadBalancers {
 				if elb.LoadBalancers[nidx].LoadBalancerArn == input.LoadBalancerArns[idx] {
 					loadBalancers = append(loadBalancers, elb.LoadBalancers[nidx])
 				}
@@ -470,11 +470,11 @@ func (elb *MockELBV2API) RegisterTargetsRequest(*elbv2.RegisterTargetsInput) (*r
 
 func (elb *MockELBV2API) RemoveListenerCertificates(input *elbv2.RemoveListenerCertificatesInput) (*elbv2.RemoveListenerCertificatesOutput, error) {
 	// for each elb
-	for idx, _ := range elb.Listeners {
+	for idx := range elb.Listeners {
 		// if the listener arn is the same as the one we want
 		if elb.Listeners[idx].ListenerArn == input.ListenerArn {
 			// for each certificate on the listener
-			for nidx, _ := range elb.Listeners[idx].Certificates {
+			for nidx := range elb.Listeners[idx].Certificates {
 				// if the certificate on the listener is the same one we want to remove
 				if elb.Listeners[idx].Certificates[nidx].CertificateArn == input.Certificates[0].CertificateArn {
 					// remove it from the internal slice reference.

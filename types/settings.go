@@ -4,8 +4,7 @@ import (
 	"net/http"
 
 	"code.cloudfoundry.org/lager"
-	"github.com/18f/cf-domain-broker/interfaces"
-	"github.com/18f/cf-domain-broker/routes"
+	"github.com/aws/aws-sdk-go/service/cloudfront/cloudfrontiface"
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 	"github.com/aws/aws-sdk-go/service/iam/iamiface"
 	"github.com/go-acme/lego/v3/challenge"
@@ -22,14 +21,11 @@ type GlobalSettings struct {
 	// Global settings from the environment, only read on startup.
 	RuntimeSettings RuntimeSettings
 
-	// Worker Manager settings
-	WorkerManagerOpts routes.WorkerManagerSettings
-
 	// AWS IAM.
 	IamSvc iamiface.IAMAPI
 
 	// AWS CloudFront.
-	CloudFront interfaces.CloudfrontDistributionIface
+	CloudFront cloudfrontiface.CloudFrontAPI
 
 	// AWS ELBv2
 	ElbSvc elbv2iface.ELBV2API

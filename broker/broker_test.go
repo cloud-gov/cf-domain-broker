@@ -11,7 +11,6 @@ import (
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/fakes"
-	"github.com/18f/cf-domain-broker/interfaces"
 	leproviders "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/routes"
@@ -27,7 +26,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// Broker test entry point.
+// DomainBroker test entry point.
 func TestBrokerSuite(t *testing.T) {
 	suite.Run(t, new(BrokerSuite))
 }
@@ -35,10 +34,11 @@ func TestBrokerSuite(t *testing.T) {
 // Mocks and such.
 type BrokerSuite struct {
 	suite.Suite
-	suite.SetupTestSuite
-	Broker   *DomainBroker
-	Manager  routes.RouteManagerSettings
-	Settings types.RuntimeSettings
+	DomainBrokerSettings  *DomainBrokerSettings
+	DomainBroker          *DomainBroker
+	WorkerManagerSettings *routes.WorkerManagerSettings
+	WorkerManager         *routes.WorkerManager
+	RuntimeSettings       *types.RuntimeSettings
 
 	DB     *gorm.DB
 	Gravel *gravel.Gravel
@@ -52,6 +52,15 @@ func (s *BrokerSuite) SetupTest() {
 	var err error
 	s.DB, err = gorm.Open("sqlite3", ":memory:")
 	s.Require().NoError(err)
+
+	// migrate our DB to set up the schema.
+	if err := s.DB.AutoMigrate(&models.DomainRoute{},
+		&models.UserData{},
+		&models.Domain{},
+		&models.Certificate{},
+		&leproviders.DomainMessenger{}).Error; err != nil {
+		s.Require().NoError(err)
+	}
 
 	// set up the gravel test harness.
 	gravelOpts := gravel.NewDefaultGravelOpts()
@@ -67,26 +76,15 @@ func (s *BrokerSuite) SetupTest() {
 	go s.Gravel.StartDnsServer()
 	go s.Gravel.StartWebServer()
 
-	settings := types.RuntimeSettings{}
-	settings.AcmeUrl = fmt.Sprintf("https://%s%s", s.Gravel.Opts.ListenAddress, s.Gravel.Opts.WfeOpts.DirectoryPath)
-	settings.Email = "cloud-gov-operations@gsa.gov"
-	resolvers := make(map[string]string)
-	resolvers["localhost"] = internalResolver
-
-	// migrate our DB to set up the schema.
-	if err := s.DB.AutoMigrate(&models.DomainRoute{},
-		&models.UserData{},
-		&models.Domain{},
-		&models.Certificate{},
-		&leproviders.DomainMessenger{}).Error; err != nil {
-		s.Require().NoError(err)
+	s.RuntimeSettings = &types.RuntimeSettings{
+		AcmeUrl:   fmt.Sprintf("https://%s%s", s.Gravel.Opts.ListenAddress, s.Gravel.Opts.WfeOpts.DirectoryPath),
+		Email:     "cloud-gov-operations@gsa.gov",
+		Resolvers: map[string]string{"localhost": fmt.Sprintf("localhost:%d", s.Gravel.Opts.DnsOpts.DnsPort)},
 	}
-	s.DB.SetLogger(s.Gravel.Logger) // use the gravel logger because lager.Logger doesn't have `Print`
 
 	// set up our fakes. we need to create an elb so there's something the route manager can query for.
 	elbSvc := fakes.NewMockELBV2API()
 	iamSvc := fakes.NewMockIAMAPI()
-	//cloudfrontSvc := new(fakes.FakeCloudFrontAPI)
 
 	// create 5 ELBs, and a random number (<= 25) of listeners on each to ensure there's some variety in it, so we can
 	// ensure the least assigned logic works.
@@ -111,34 +109,49 @@ func (s *BrokerSuite) SetupTest() {
 	logger := lager.NewLogger("domain-broker-test")
 	logger.RegisterSink(testSink)
 	loggerSession := logger.Session("test-suite")
-	s.Logger = loggerSession
-	trmLogger := loggerSession.Session("test-route-manager")
 
-	s.Manager, err = routes.NewManager(
-		trmLogger,
-		iamSvc,
-		&interfaces.CloudfrontDistribution{
-			Settings: settings,
-			Service: nil,
-		},
-		elbSvc,
-		settings,
-		s.DB,
-		false,
-	)
-	s.Manager.DnsChallengeProvider = s.Gravel.DnsServer.Opts.Provider
-	s.Manager.AcmeHttpClient = s.Gravel.Client
-	s.Manager.Resolvers = map[string]string{"localhost": fmt.Sprintf("localhost:%d", s.Gravel.Opts.DnsOpts.DnsPort)}
+	s.WorkerManagerSettings = &routes.WorkerManagerSettings{
+		AutostartWorkerPool:         true,
+		AcmeHttpClient:              s.Gravel.Client,
+		AcmeUrl:                     s.RuntimeSettings.AcmeUrl,
+		AcmeEmail:                   s.RuntimeSettings.Email,
+		Db:                          s.DB,
+		IamSvc:                      iamSvc,
+		CloudFront:                  nil,
+		ElbSvc:                      elbSvc,
+		ElbUpdateFrequencyInSeconds: 15,
+		PersistentDnsProvider:       false,
+		DnsChallengeProvider:        s.Gravel.DnsServer.Opts.Provider,
+		Resolvers:                   s.RuntimeSettings.Resolvers,
+		LogLevel:                    1,
+		Logger:                      loggerSession,
+	}
+
+	workerManager := routes.NewWorkerManager(s.WorkerManagerSettings)
+
+	s.DomainBrokerSettings = &DomainBrokerSettings{
+		Db:            s.DB,
+		Logger:        loggerSession,
+		WorkerManager: workerManager,
+	}
+
+	s.DomainBroker = NewDomainBroker(s.DomainBrokerSettings)
+
 	s.Require().NoError(err)
-
-	s.Broker = NewDomainBroker(&s.Manager, trmLogger)
 }
 
 func (s *BrokerSuite) TearDownTest() {
 	// clear everything so it can be rebuilt on the next test.
-	s.Broker = &DomainBroker{}
-	s.Manager = routes.RouteManagerSettings{}
-	s.Settings = types.RuntimeSettings{}
+	s.DomainBrokerSettings  = &DomainBrokerSettings{}
+	s.DomainBroker          = &DomainBroker{}
+	s.WorkerManagerSettings = &routes.WorkerManagerSettings{}
+	s.WorkerManager         = &routes.WorkerManager{}
+	s.RuntimeSettings       = &types.RuntimeSettings{}
+
+	if err := s.DB.Close(); err != nil {
+		s.Require().NoError(err, "there should not be an error closing the test db")
+	}
+
 	s.DB = &gorm.DB{}
 
 	if err := s.Gravel.CertificateServer.Shutdown(context.TODO()); err != nil {
@@ -152,7 +165,7 @@ func (s *BrokerSuite) TearDownTest() {
 
 // Test where DNS will be autosolved, this is really just ensuring the core functionality works.
 func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
-	b := s.Broker
+	b := s.DomainBroker
 
 	var (
 		serviceInstanceId = uuid.New()
@@ -169,6 +182,9 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 		s.Require().NoError(err, "provisioning should not throw an error")
 	}
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
+
+	// sleep a bit to let the workers do their thing.
+	time.Sleep(time.Second * 5)
 
 	var verifyRoute models.DomainRoute
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).First(&verifyRoute).Error; err != nil {
@@ -200,7 +216,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	)
 
 	s.Gravel.Opts.AutoUpdateAuthZRecords = false
-	s.Manager.PersistentDnsProvider = true
+	s.WorkerManagerSettings.PersistentDnsProvider = true
 
 	// test the domain plan.
 	d := domain.ProvisionDetails{
@@ -212,7 +228,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	// and adding the TXT records of their DNS server. once we verify the records, this should continue in the
 	// background. we have to do this because otherwise it blocks.
 	go func(s *BrokerSuite) {
-		res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
+		res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
 		if err != nil {
 			s.Require().NoError(err, "provisioning should not throw an error")
 		}
@@ -261,7 +277,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 
 // todo (mxplusb): clean up test names
 func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleSAN() {
-	b := s.Broker
+	b := s.DomainBroker
 
 	var (
 		serviceInstanceId = uuid.New()
@@ -309,7 +325,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 
 	s.Gravel.Opts.AutoUpdateAuthZRecords = false
 	s.Gravel.Opts.DnsOpts.AlreadyHashed = true
-	s.Manager.PersistentDnsProvider = true
+	s.WorkerManagerSettings.PersistentDnsProvider = true
 
 	// test the domain plan.
 	d := domain.ProvisionDetails{
@@ -321,7 +337,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 	// and adding the TXT records of their DNS server. once we verify the records, this should continue in the
 	// background. we have to do this because otherwise it blocks.
 	go func(s *BrokerSuite) {
-		res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
+		res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
 		if err != nil {
 			s.Require().NoError(err, "provisioning should not throw an error")
 		}
@@ -378,13 +394,13 @@ func (s *BrokerSuite) TestDomainBroker_Deprovision() {
 		RawParameters: []byte(fmt.Sprintf(`{"domains": ["test.service"]}`)),
 	}
 
-	res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
+	res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
 	if err != nil {
 		s.Require().NoError(err, "provisioning should not throw an error")
 	}
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
-	delResp, err := s.Broker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
+	delResp, err := s.DomainBroker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
 		PlanID:    "",
 		ServiceID: "",
 		Force:     true,
@@ -413,13 +429,13 @@ func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
 		RawParameters: []byte(fmt.Sprintf(`{"domains": ["test.service", "test2.service", "test3.service"]}`)),
 	}
 
-	res, err := s.Broker.Provision(context.Background(), serviceInstanceId, d, true)
+	res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
 	if err != nil {
 		s.Require().NoError(err, "provisioning should not throw an error")
 	}
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
-	delResp, err := s.Broker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
+	delResp, err := s.DomainBroker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
 		PlanID:    "",
 		ServiceID: "",
 		Force:     true,
@@ -439,7 +455,7 @@ func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
 
 func (s *BrokerSuite) TestDomainBroker_Services() {
 
-	res, err := s.Broker.Services(context.Background())
+	res, err := s.DomainBroker.Services(context.Background())
 
 	s.Nil(err, "expected ")
 	s.Equal(1, len(res), "expected one service")        // one service
@@ -447,25 +463,25 @@ func (s *BrokerSuite) TestDomainBroker_Services() {
 }
 
 func (s *BrokerSuite) TestDomainBroker_Bind() {
-	b := s.Broker
+	b := s.DomainBroker
 	_, err := b.Bind(context.Background(), "", "", domain.BindDetails{}, false)
 	s.NotNil(err, "expected error on bind")
 }
 
 func (s *BrokerSuite) TestDomainBroker_Unbind() {
-	b := s.Broker
+	b := s.DomainBroker
 	_, err := b.Unbind(context.Background(), "", "", domain.UnbindDetails{}, false)
 	s.NotNil(err, "expected error on unbind")
 }
 
 func (s *BrokerSuite) TestDomainBroker_GetBinding() {
-	b := s.Broker
+	b := s.DomainBroker
 	_, err := b.GetBinding(context.Background(), "", "")
 	s.NotNil(err, "expected error on get binding")
 }
 
 func (s *BrokerSuite) TestDomainBroker_LastBindingOperation() {
-	b := s.Broker
+	b := s.DomainBroker
 	_, err := b.LastBindingOperation(context.Background(), "", "", domain.PollDetails{})
 	s.NotNil(err, "expected error on last binding operation")
 }

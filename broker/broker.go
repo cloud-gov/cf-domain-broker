@@ -4,25 +4,37 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
-	"github.com/18f/cf-domain-broker/interfaces"
 	"github.com/18f/cf-domain-broker/models"
+	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
-	"github.com/cloudfoundry-community/go-cfclient"
-
+	"github.com/jinzhu/gorm"
 	"github.com/pivotal-cf/brokerapi/domain"
 	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
 )
 
+type DomainBrokerSettings struct {
+	Db            *gorm.DB
+	Logger        lager.Logger
+	WorkerManager *routes.WorkerManager
+}
+
 type DomainBroker struct {
-	Manager interfaces.RouteManager
-	Cf      *cfclient.Client
-	logger  lager.Logger
+	logger        lager.Logger
+	settings      *DomainBrokerSettings
+	workerManager *routes.WorkerManager
+}
+
+func NewDomainBroker(settings *DomainBrokerSettings) *DomainBroker {
+	db := &DomainBroker{
+		settings:      settings,
+		workerManager: settings.WorkerManager,
+		logger:        settings.Logger.Session("domain-broker"),
+	}
+	return db
 }
 
 // Get the list of plans and service the broker has to offer.
@@ -153,10 +165,22 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	})
 
 	// check for duplicates.
-	resp, err := d.Manager.Get(instanceID)
-	if resp.InstanceId != "" {
-		lsession.Error("preexisting-instance", err)
+	getInstanceResponse := make(chan routes.GetInstanceResponse, 1)
+	d.workerManager.RequestRouter <- routes.GetInstanceRequest{
+		Context:    ctx,
+		InstanceId: instanceID,
+		Response:   getInstanceResponse,
+	}
+	resp := <-getInstanceResponse
+
+	if resp.Route.InstanceId == instanceID {
+		lsession.Info("preexisting-instance")
 		return spec, apiresponses.ErrInstanceAlreadyExists
+	} else if resp.Error != nil {
+		lsession.Error("error-checking-existing-action", resp.Error)
+		if resp.Error.Error() != "record not found" {
+			return spec, apiresponses.NewFailureResponse(resp.Error, http.StatusInternalServerError, "error-checking-existing-action")
+		}
 	}
 
 	tags := map[string]string{
@@ -166,26 +190,41 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 		"Plan":         details.PlanID,
 	}
 
-	_, err = d.Manager.Create(ctx, instanceID, domOpts, cdnOpts, tags)
-	if err != nil {
-		lsession.Error("create-instance", err, lager.Data{
-			"tags": tags,
-		})
-		return spec, err
+	// build the request
+	req := routes.ProvisionRequest{
+		Context:    ctx,
+		InstanceId: instanceID,
+		DomainOpts: domOpts,
+		CdnOpts:    cdnOpts,
+		Tags:       tags,
 	}
+
+	// send the request
+	d.workerManager.RequestRouter <- req
 
 	return domain.ProvisionedServiceSpec{IsAsync: true}, nil
 }
 
 func (d *DomainBroker) Deprovision(ctx context.Context, instanceID string, details domain.DeprovisionDetails, asyncAllowed bool) (domain.DeprovisionServiceSpec, error) {
-	route, err := d.Manager.Get(instanceID)
-	if err != nil {
-		return domain.DeprovisionServiceSpec{}, err
+	getInstanceResponsec := make(chan routes.GetInstanceResponse, 1)
+	d.workerManager.RequestRouter <- routes.GetInstanceRequest{
+		Context:    ctx,
+		InstanceId: instanceID,
+		Response:   getInstanceResponsec,
 	}
 
-	err = d.Manager.Disable(route)
-	if err != nil {
-		return domain.DeprovisionServiceSpec{}, err
+	getInstanceResponse := <-getInstanceResponsec
+	if getInstanceResponse.Error != nil {
+		return domain.DeprovisionServiceSpec{}, getInstanceResponse.Error
+	}
+
+	deprovisionResponsec := make(chan routes.DeprovisionResponse, 1)
+	d.workerManager.RequestRouter <- routes.DeprovisionRequest{
+		Context:      ctx,
+		InstanceId:   instanceID,
+		Details:      details,
+		AsyncAllowed: asyncAllowed,
+		Response:     deprovisionResponsec,
 	}
 
 	return domain.DeprovisionServiceSpec{IsAsync: true}, nil
@@ -195,64 +234,39 @@ func (d *DomainBroker) GetInstance(ctx context.Context, instanceID string) (doma
 	return domain.GetInstanceDetailsSpec{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
-//finish
+// todo (mxplusb): reenable this when CDN support exists.
 func (d *DomainBroker) Update(ctx context.Context, instanceID string, details domain.UpdateDetails, asyncAllowed bool) (domain.UpdateServiceSpec, error) {
 
-	options, err := d.parseUpdateDetails(details)
-	if err != nil {
-		return domain.UpdateServiceSpec{}, err
-	}
-
-	emptyCDN := types.CdnPlanOptions{}
-	err = d.Manager.Update(instanceID, options, emptyCDN)
-	if err != nil {
-		return domain.UpdateServiceSpec{}, err
-	}
-
-	return domain.UpdateServiceSpec{}, nil
+	//options, err := d.parseUpdateDetails(details)
+	//if err != nil {
+	//	return domain.UpdateServiceSpec{}, err
+	//}
+	//
+	//emptyCDN := types.CdnPlanOptions{}
+	//err = d.Manager.Update(instanceID, options, emptyCDN)
+	//if err != nil {
+	//	return domain.UpdateServiceSpec{}, err
+	//}
+	//
+	//return domain.UpdateServiceSpec{}, nil
+	return domain.UpdateServiceSpec{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
 func (d *DomainBroker) LastOperation(ctx context.Context, instanceID string, details domain.PollDetails) (domain.LastOperation, error) {
-	lastOp := domain.LastOperation{}
-
-	lsession := d.logger.Session("last-operation", lager.Data{
-		"instance-id": instanceID,
-	})
-
-	r, err := d.Manager.Get(instanceID)
-	if err != nil {
-		lsession.Error("route-manager-get", err)
-		return lastOp, err
+	lastOpsRespc := make(chan routes.LastOperationResponse, 1)
+	lastOpReq := routes.LastOperationRequest{
+		Context:    ctx,
+		InstanceId: instanceID,
+		Details:    details,
+		Response:   lastOpsRespc,
 	}
+	d.workerManager.RequestRouter <- lastOpReq
+	lastOpResp := <-lastOpsRespc
 
-	err = d.Manager.Poll(r)
-	if err != nil {
-		d.logger.Error("error-during-poll", err)
-		return domain.LastOperation{}, apiresponses.NewFailureResponse(err, 409, "cannot reconcile queried state with desired state")
+	if lastOpResp.Error != nil {
+		return domain.LastOperation{}, lastOpResp.Error
 	}
-
-	switch r.State {
-	case cfdomainbroker.Provisioning:
-		instructions, err := d.Manager.GetDNSInstructions(r)
-		if err != nil {
-			return domain.LastOperation{}, err
-		}
-		return domain.LastOperation{
-			State:       domain.InProgress,
-			Description: instructions.String(),
-		}, nil
-	case cfdomainbroker.Deprovisioning:
-		return domain.LastOperation{
-			State:       domain.InProgress,
-			Description: fmt.Sprintf("deprovisioning in progress"),
-		}, nil
-	default:
-		return domain.LastOperation{
-			State:       domain.Succeeded,
-			Description: fmt.Sprintf("provisioned"),
-		}, nil
-	}
-	return lastOp, nil
+	return lastOpResp.LastOperation, nil
 }
 
 func (*DomainBroker) Bind(ctx context.Context, instanceID, bindingID string, details domain.BindDetails, asyncAllowed bool) (domain.Binding, error) {
@@ -271,13 +285,6 @@ func (*DomainBroker) LastBindingOperation(ctx context.Context, instanceID, bindi
 	return domain.LastOperation{}, apiresponses.NewFailureResponse(errors.New("this api is unsupported"), http.StatusUnsupportedMediaType, "unsupported request")
 }
 
-func NewDomainBroker(mgr interfaces.RouteManager, logger lager.Logger) *DomainBroker {
-	return &DomainBroker{
-		Manager: mgr,
-		logger:  logger.Session("route-Manager"),
-	}
-}
-
 func (d *DomainBroker) createDomainBrokerOptions(details []byte) (options types.DomainPlanOptions, err error) {
 	if len(details) == 0 {
 		err = errors.New("must be invoked with configurations parameters")
@@ -292,50 +299,50 @@ func (d *DomainBroker) createDomainBrokerOptions(details []byte) (options types.
 	return
 }
 
-func (d *DomainBroker) parseUpdateDetails(details domain.UpdateDetails) (options types.DomainPlanOptions, err error) {
-	options, err = d.createDomainBrokerOptions(details.GetRawParameters())
-	if err != nil {
-		return
-	}
+//func (d *DomainBroker) parseUpdateDetails(details domain.UpdateDetails) (options types.DomainPlanOptions, err error) {
+//	options, err = d.createDomainBrokerOptions(details.GetRawParameters())
+//	if err != nil {
+//		return
+//	}
+//
+//	if len(options.Domains) == 0 {
+//		err = errors.New("must pass non-empty `domaions`")
+//		return
+//	}
+//
+//	var domains []string
+//	for _, domain := range options.Domains {
+//		domains = append(domains, domain.Value)
+//	}
+//
+//	err = d.checkDomain(domains, details.PreviousValues.OrgID)
+//	return
+//}
 
-	if len(options.Domains) == 0 {
-		err = errors.New("must pass non-empty `domaions`")
-		return
-	}
-
-	var domains []string
-	for _, domain := range options.Domains {
-		domains = append(domains, domain.Value)
-	}
-
-	err = d.checkDomain(domains, details.PreviousValues.OrgID)
-	return
-}
-
-func (d *DomainBroker) checkDomain(domains []string, orgGUID string) error {
-	var errorList []string
-	orgName := "<organization>"
-	for _, domain := range domains {
-		if _, err := d.Cf.GetDomainByName(domain); err != nil {
-			d.logger.Error("Error checking domain", err, lager.Data{
-				"domain":  domain,
-				"orgGUID": orgGUID,
-			})
-			if orgName == "<organization>" {
-				org, err := d.Cf.GetOrgByGuid(orgGUID)
-				if err == nil {
-					orgName = org.Name
-				}
-			}
-			errorList = append(errorList, fmt.Sprintf("`cf create-domain %s %s", orgName, domain))
-		}
-	}
-
-	if len(errorList) > 0 {
-		if len(errorList) > 1 {
-			return fmt.Errorf("Multiple domains do not exist; create them with:\n%s", strings.Join(errorList, "\n"))
-		}
-		return fmt.Errorf("Domain does not exist; create it with %s", errorList[0])
-	}
-	return nil
-}
+//func (d *DomainBroker) checkDomain(domains []string, orgGUID string) error {
+//	var errorList []string
+//	orgName := "<organization>"
+//	for _, domain := range domains {
+//		if _, err := d.Cf.GetDomainByName(domain); err != nil {
+//			d.logger.Error("Error checking domain", err, lager.Data{
+//				"domain":  domain,
+//				"orgGUID": orgGUID,
+//			})
+//			if orgName == "<organization>" {
+//				org, err := d.Cf.GetOrgByGuid(orgGUID)
+//				if err == nil {
+//					orgName = org.Name
+//				}
+//			}
+//			errorList = append(errorList, fmt.Sprintf("`cf create-domain %s %s", orgName, domain))
+//		}
+//	}
+//
+//	if len(errorList) > 0 {
+//		if len(errorList) > 1 {
+//			return fmt.Errorf("Multiple domains do not exist; create them with:\n%s", strings.Join(errorList, "\n"))
+//		}
+//		return fmt.Errorf("Domain does not exist; create it with %s", errorList[0])
+//	}
+//	return nil
+//}

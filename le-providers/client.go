@@ -45,7 +45,7 @@ func NewAcmeClient(client *http.Client, resolvers map[string]string, config *leg
 
 	// add the nameserver resolvers to the dns provider.
 	var nameservers []string
-	for k, _ := range resolvers {
+	for k := range resolvers {
 		nameservers = append(nameservers, resolvers[k])
 	}
 	a.logger.Debug("using-nameservers", lager.Data{

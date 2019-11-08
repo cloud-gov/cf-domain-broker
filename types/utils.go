@@ -17,7 +17,7 @@ func (h Headers) Contains(header string) bool {
 
 func (h Headers) Strings() []string {
 	headers := []string{}
-	for header, _ := range h {
+	for header := range h {
 		headers = append(headers, header)
 	}
 	return headers
