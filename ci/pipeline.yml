@@ -1,0 +1,357 @@
+---
+meta:
+  cf-creds-development: &cf-creds-development
+    CF_API_URL: ((cf-api-url-development))
+    CF_USERNAME: ((cf-deploy-username-development))
+    CF_PASSWORD: ((cf-deploy-password-development))
+    CF_ORGANIZATION: ((cf-organization-development))
+    CF_SPACE: ((cf-space-development))
+  cf-creds-staging: &cf-creds-staging
+    CF_API_URL: ((cf-api-url-staging))
+    CF_USERNAME: ((cf-deploy-username-staging))
+    CF_PASSWORD: ((cf-deploy-password-staging))
+    CF_ORGANIZATION: ((cf-organization-staging))
+    CF_SPACE: ((cf-space-staging))
+  cf-creds-production: &cf-creds-production
+    CF_API_URL: ((cf-api-url-production))
+    CF_USERNAME: ((cf-deploy-username-production))
+    CF_PASSWORD: ((cf-deploy-password-production))
+    CF_ORGANIZATION: ((cf-organization-production))
+    CF_SPACE: ((cf-space-production))
+
+jobs:
+- name: test-domain-broker
+  plan:
+  - get: broker-src
+    trigger: true
+  - task: run-tests
+    file: broker-src/ci/run-tests.yml
+
+- name: deploy-development
+  plan:
+  - aggregate:
+    - get: broker-src
+      passed: [test-domain-broker]
+      trigger: true
+    - get: pipeline-tasks
+  - task: create-db
+    file: broker-src/ci/create-db.yml
+    params:
+      # Note: Name must match service name in manifest
+      SERVICE_TYPE: aws-rds
+      SERVICE_NAME: rds-domain
+      SERVICE_PLAN: medium-psql
+      <<: *cf-creds-development
+  - aggregate:
+    - put: broker-deploy-development
+      params:
+        path: broker-src
+        manifest: broker-src/manifest-broker.yml
+        environment_variables: &cfenv-development
+          BROKER_USERNAME: ((domain-broker-user-development))
+          BROKER_PASSWORD: ((domain-broker-pass-development))
+          EMAIL: ((domain-broker-email-development))
+          ACME_URL: ((domain-broker-acme-url-development))
+          BUCKET: ((domain-broker-bucket-development))
+          IAM_PATH_PREFIX: ((domain-broker-iam-path-prefix-development))
+          AWS_ACCESS_KEY_ID: ((domain-broker-access-key-id-development))
+          AWS_SECRET_ACCESS_KEY: ((domain-broker-secret-access-key-development))
+          AWS_DEFAULT_REGION: ((domain-broker-region-development))
+          SERVER_SIDE_ENCRYPTION: AES256
+          API_ADDRESS: ((cf-api-url-development))
+          CLIENT_ID: ((domain-broker-client-id-development))
+          CLIENT_SECRET: ((domain-broker-client-secret-development))
+          DEFAULT_ORIGIN: ((domain-broker-default-origin-development))
+  #  - put: broker-deploy-development
+  #    params:
+  #      path: broker-src
+  #      manifest: broker-src/manifest-cron.yml
+  #      environment_variables: *cfenv-development
+  - task: update-broker
+    file: pipeline-tasks/register-service-broker.yml
+    params:
+      <<: *cf-creds-development
+      BROKER_NAME: domain-broker-v2
+      AUTH_USER: ((domain-broker-user-development))
+      AUTH_PASS: ((domain-broker-pass-development))
+      SERVICES: Custom-Domain-Broker
+  on_failure:
+    put: slack
+    params:
+      text: |
+        :x: FAILED to deploy cf-domain-service-broker on ((cf-api-url-development))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
+  on_success:
+    put: slack
+    params:
+      text: |
+        :white_check_mark: Successfully deployed cf-domain-service-broker on ((cf-api-url-development))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
+
+- name: acceptance-tests-development
+  serial: true
+  plan:
+  - get: broker-src
+    passed: [deploy-development]
+    trigger: true
+  - get: broker-release
+    trigger: true
+  - get: stemcell-xenial
+    trigger: true
+  - aggregate:
+    - task: acceptance-tests-http-01
+      file: broker-src/ci/acceptance-tests.yml
+      params: &acceptance-tests-params-development
+        <<: *cf-creds-development
+        SERVICE_NAME: custom-domain
+        PLAN_NAME: custom-domain
+        SERVICE_INSTANCE_NAME: domains-acceptance-test-%s
+        AWS_ACCESS_KEY_ID: ((domains-broker-access-key-id-acceptance-development))
+        AWS_SECRET_ACCESS_KEY: ((domains-broker-secret-access-key-acceptance-development))
+        CHALLENGE_TYPE: HTTP-01
+        HOSTED_ZONE_ID: ((hosted-zone-id-development))
+        DOMAIN: ((domain-url-development))
+        DOMAINS_TIMEOUT: ((domains-timeout))
+        CA_CERT: ((acceptance-test-ca-cert-development))
+        DELETE_SERVICE: ((acceptance-test-delete-service-development))
+    - task: acceptance-tests-dns-01
+      file: broker-src/ci/acceptance-tests.yml
+      params:
+        <<: *acceptance-tests-params-development
+        CHALLENGE_TYPE: DNS-01
+
+- name: deploy-staging
+  plan:
+  - aggregate:
+    - get: broker-src
+      passed: [acceptance-tests-development]
+      trigger: true
+    - get: pipeline-tasks
+  - task: create-db
+    file: broker-src/ci/create-db.yml
+    params:
+      # Note: Name must match service name in manifest
+      SERVICE_TYPE: aws-rds
+      SERVICE_NAME: rds-domain
+      SERVICE_PLAN: medium-psql
+      <<: *cf-creds-staging
+  - aggregate:
+    - put: broker-deploy-staging
+      params:
+        path: broker-src
+        manifest: broker-src/manifest-broker.yml
+        environment_variables: &cfenv-staging
+          BROKER_USERNAME: ((domain-broker-user-staging))
+          BROKER_PASSWORD: ((domain-broker-pass-staging))
+          EMAIL: ((domain-broker-email-staging))
+          ACME_URL: ((domain-broker-acme-url-staging))
+          BUCKET: ((domain-broker-bucket-staging))
+          IAM_PATH_PREFIX: ((domain-broker-iam-path-prefix-staging))
+          AWS_ACCESS_KEY_ID: ((domain-broker-access-key-id-staging))
+          AWS_SECRET_ACCESS_KEY: ((domain-broker-secret-access-key-staging))
+          AWS_DEFAULT_REGION: ((domain-broker-region-staging))
+          SERVER_SIDE_ENCRYPTION: AES256
+          API_ADDRESS: ((cf-api-url-staging))
+          CLIENT_ID: ((domain-broker-client-id-staging))
+          CLIENT_SECRET: ((domain-broker-client-secret-staging))
+          DEFAULT_ORIGIN: ((domain-broker-default-origin-staging))
+    - put: broker-deploy-staging
+      params:
+        path: broker-src
+        manifest: broker-src/manifest-cron.yml
+        environment_variables: *cfenv-staging
+  - task: update-broker
+    file: pipeline-tasks/register-service-broker.yml
+    params:
+      <<: *cf-creds-staging
+      BROKER_NAME: domain-broker-v2
+      AUTH_USER: ((domain-broker-user-staging))
+      AUTH_PASS: ((domain-broker-pass-staging))
+      SERVICES: Custom-Domain-Broker
+  on_failure:
+    put: slack
+    params:
+      text: |
+        :x: FAILED to deploy cf-domain-service-broker on ((cf-api-url-staging))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
+  on_success:
+    put: slack
+    params:
+      text: |
+        :white_check_mark: Successfully deployed cf-domain-service-broker on ((cf-api-url-staging))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
+
+- name: acceptance-tests-staging
+  serial: true
+  plan:
+  - get: broker-src
+    passed: [deploy-staging]
+    trigger: true
+  - get: broker-release
+    trigger: true
+  - get: stemcell-xenial
+    trigger: true
+  - aggregate:
+    - task: acceptance-tests-http-01
+      file: broker-src/ci/acceptance-tests.yml
+      params: &acceptance-tests-params-staging
+        <<: *cf-creds-staging
+        SERVICE_NAME: custom-domain
+        PLAN_NAME: custom-domain
+        SERVICE_INSTANCE_NAME: domains-acceptance-test-%s
+        AWS_ACCESS_KEY_ID: ((domains-broker-access-key-id-acceptance-staging))
+        AWS_SECRET_ACCESS_KEY: ((domains-broker-secret-access-key-acceptance-staging))
+        CHALLENGE_TYPE: HTTP-01
+        HOSTED_ZONE_ID: ((hosted-zone-id-staging))
+        DOMAIN: ((domain-url-staging))
+        DOMAINS_TIMEOUT: ((domains-timeout))
+        CA_CERT: ((acceptance-test-ca-cert-staging))
+        DELETE_SERVICE: ((acceptance-test-delete-service-staging))
+    - task: acceptance-tests-dns-01
+      file: broker-src/ci/acceptance-tests.yml
+      params:
+        <<: *acceptance-tests-params-staging
+        CHALLENGE_TYPE: DNS-01
+
+- name: deploy-production
+  plan:
+  - aggregate:
+    - get: broker-src
+      passed: [acceptance-tests-staging]
+      trigger: true
+    - get: pipeline-tasks
+  - task: create-db
+    file: broker-src/ci/create-db.yml
+    params:
+      # Note: Name must match service name in manifest
+      SERVICE_TYPE: aws-rds
+      SERVICE_NAME: rds-domain
+      SERVICE_PLAN: medium-psql
+      <<: *cf-creds-production
+  - aggregate:
+    - put: broker-deploy-production
+      params:
+        path: broker-src
+        manifest: broker-src/manifest-broker.yml
+        environment_variables: &cfenv-production
+          BROKER_USERNAME: ((domain-broker-user-production))
+          BROKER_PASSWORD: ((domain-broker-pass-production))
+          EMAIL: ((domain-broker-email-production))
+          ACME_URL: ((domain-broker-acme-url-production))
+          BUCKET: ((domain-broker-bucket-production))
+          IAM_PATH_PREFIX: ((domain-broker-iam-path-prefix-production))
+          AWS_ACCESS_KEY_ID: ((domain-broker-access-key-id-production))
+          AWS_SECRET_ACCESS_KEY: ((domain-broker-secret-access-key-production))
+          AWS_DEFAULT_REGION: ((domain-broker-region-production))
+          SERVER_SIDE_ENCRYPTION: AES256
+          API_ADDRESS: ((cf-api-url-production))
+          CLIENT_ID: ((domain-broker-client-id-production))
+          CLIENT_SECRET: ((domain-broker-client-secret-production))
+          DEFAULT_ORIGIN: ((domain-broker-default-origin-production))
+    - put: broker-deploy-production
+      params:
+        path: broker-src
+        manifest: broker-src/manifest-cron.yml
+        environment_variables: *cfenv-production
+  - task: update-broker
+    file: pipeline-tasks/register-service-broker.yml
+    params:
+      <<: *cf-creds-production
+      BROKER_NAME: domain-broker-v2
+      AUTH_USER: ((domain-broker-user-production))
+      AUTH_PASS: ((domain-broker-pass-production))
+      SERVICES: cdn-route
+  on_failure:
+    put: slack
+    params:
+      text: |
+        :x: FAILED to deploy cf-domain-service-broker on ((cf-api-url-production))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
+  on_success:
+    put: slack
+    params:
+      text: |
+        :white_check_mark: Successfully deployed cf-domain-service-broker on ((cf-api-url-production))
+        <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|View build details>
+      channel: ((slack-channel))
+      username: ((slack-username))
+      icon_url: ((slack-icon-url))
+
+- name: acceptance-tests-production
+  serial: true
+  plan:
+  - get: broker-src
+    passed: [deploy-production]
+    trigger: true
+  - aggregate:
+    - task: acceptance-tests-dns-01
+      file: broker-src/ci/acceptance-tests.yml
+      params: &acceptance-tests-params-production
+        <<: *cf-creds-production
+        SERVICE_NAME: cdn-route
+        PLAN_NAME: cdn-route
+        CHALLENGE_TYPE: DNS-01
+        SERVICE_INSTANCE_NAME: cdn-acceptance-test-%s
+        AWS_ACCESS_KEY_ID: ((domain-broker-access-key-id-production))
+        AWS_SECRET_ACCESS_KEY: ((domain-broker-secret-access-key-production))
+        HOSTED_ZONE_ID: ((hosted-zone-id-production))
+        DOMAIN: ((domain-url-production))
+        CDN_TIMEOUT: ((cdn-timeout))
+        CA_CERT: ((acceptance-test-ca-cert-production))
+
+resources:
+- name: broker-src
+  type: git
+  source:
+    uri: ((cf-domain-broker-git-url))
+    branch: ((cf-domain-broker-git-branch))
+
+- name: pipeline-tasks
+  type: git
+  source:
+    uri: ((pipeline-tasks-git-url))
+    branch: ((pipeline-tasks-git-branch))
+
+- name: broker-deploy-staging
+  type: cf
+  source:
+    api: ((cf-api-url-staging))
+    username: ((cf-deploy-username-staging))
+    password: ((cf-deploy-password-staging))
+    organization: ((cf-organization-staging))
+    space: ((cf-space-staging))
+
+- name: broker-deploy-production
+  type: cf
+  source:
+    api: ((cf-api-url-production))
+    username: ((cf-deploy-username-production))
+    password: ((cf-deploy-password-production))
+    organization: ((cf-organization-production))
+    space: ((cf-space-production))
+
+- name: slack
+  type: slack-notification
+  source:
+    url: ((slack-webhook-url))
+
+resource_types:
+- name: slack-notification
+  type: docker-image
+  source:
+    repository: cfcommunity/slack-notification-resource
