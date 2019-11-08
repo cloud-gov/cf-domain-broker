@@ -6,7 +6,7 @@ import (
 )
 
 type CloudfrontDistribution struct {
-	Settings Settings
+	Settings RuntimeSettings
 	Service  cloudfrontiface.CloudFrontAPI
 }
 
@@ -17,6 +17,6 @@ type ALBProxy struct {
 }
 
 type IAM struct {
-	Settings Settings
+	Settings RuntimeSettings
 	Service  iamiface.IAMAPI
 }

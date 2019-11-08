@@ -24,7 +24,7 @@ type DomainString struct {
 }
 
 // todo (mxplusb): finish plumbing all of this.
-type Settings struct {
+type RuntimeSettings struct {
 	Port                 string            `envconfig:"port" default:"3000"`
 	BrokerUsername       string            `envconfig:"broker_username" required:"true"`
 	BrokerPassword       string            `envconfig:"broker_password" required:"true"`
@@ -59,11 +59,11 @@ type Settings struct {
 	LogLevel int `envconfig:"log_level" default:"1"`
 }
 
-func NewSettings() (Settings, error) {
-	var settings Settings
+func NewSettings() (RuntimeSettings, error) {
+	var settings RuntimeSettings
 	return settings, nil
 }
 
-func Connect(settings Settings) (*gorm.DB, error) {
+func Connect(settings RuntimeSettings) (*gorm.DB, error) {
 	return gorm.Open("postgres", settings.DatabaseUrl)
 }

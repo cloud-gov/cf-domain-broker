@@ -37,6 +37,10 @@ type DomainRoute struct {
 	Path           string
 	InsecureOrigin bool
 	ALBProxyARN    string
+
+	// Internal Use Only
+	IsError bool
+	Error error
 }
 
 // Domain is an instance of a domain.

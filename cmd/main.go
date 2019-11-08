@@ -30,7 +30,7 @@ import (
 // todo (mxplusb): make this more cf friendly.
 func main() {
 	// before anything else, we need to grab our config so we know what to do.
-	var settings types.Settings
+	var settings types.RuntimeSettings
 	err := envconfig.Process("", &settings)
 	if err != nil {
 		panic(err)
@@ -92,7 +92,7 @@ func main() {
 	http.ListenAndServe(fmt.Sprintf(":%s", settings.Port), server)
 }
 
-func bindHTTPHandlers(handler http.Handler, settings types.Settings) http.Handler {
+func bindHTTPHandlers(handler http.Handler, settings types.RuntimeSettings) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
 	Bind(mux, settings)
@@ -100,12 +100,12 @@ func bindHTTPHandlers(handler http.Handler, settings types.Settings) http.Handle
 	return mux
 }
 
-var checks = map[string]func(types.Settings) error{
+var checks = map[string]func(types.RuntimeSettings) error{
 	"cloudfoundry": Cloudfoundry,
 	"postgresql":   Postgresql,
 }
 
-func Bind(mux *http.ServeMux, settings types.Settings) {
+func Bind(mux *http.ServeMux, settings types.RuntimeSettings) {
 	mux.HandleFunc("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
 		body := ""
 		for name, function := range checks {
@@ -139,7 +139,7 @@ func Bind(mux *http.ServeMux, settings types.Settings) {
 	}
 }
 
-func Postgresql(settings types.Settings) error {
+func Postgresql(settings types.RuntimeSettings) error {
 	db, err := gorm.Open("postgres", settings.DatabaseUrl)
 	defer db.Close()
 
@@ -150,7 +150,7 @@ func Postgresql(settings types.Settings) error {
 	return nil
 }
 
-func Cloudfoundry(settings types.Settings) error {
+func Cloudfoundry(settings types.RuntimeSettings) error {
 	// We're only validating that the CF endpoint is contactable here, as
 	// testing the authentication is tricky
 	_, err := cfclient.NewClient(&cfclient.Config{

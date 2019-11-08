@@ -166,7 +166,7 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 		"Plan":         details.PlanID,
 	}
 
-	_, err = d.Manager.Create(instanceID, domOpts, cdnOpts, tags)
+	_, err = d.Manager.Create(ctx, instanceID, domOpts, cdnOpts, tags)
 	if err != nil {
 		lsession.Error("create-instance", err, lager.Data{
 			"tags": tags,

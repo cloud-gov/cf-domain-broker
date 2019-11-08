@@ -70,7 +70,11 @@ func NewAcmeClient(client *http.Client, resolvers map[string]string, config *leg
 }
 
 func (a *AcmeClient) preCheck(domain, fqdn, value string, check dns01.PreCheckFunc) (b bool, e error) {
-	lsession := a.logger.Session("dns-pre-check")
+	lsession := a.logger.Session("dns-pre-check", lager.Data{
+		"domain": domain,
+		"fqdn":   fqdn,
+		"value":  value,
+	})
 
 	var resolverStates []bool
 	for localProvider, localAddress := range a.Resolvers {

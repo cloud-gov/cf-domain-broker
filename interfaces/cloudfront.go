@@ -21,7 +21,7 @@ type CloudfrontDistributionIface interface {
 }
 
 type CloudfrontDistribution struct {
-	Settings types.Settings
+	Settings types.RuntimeSettings
 	Service  *cloudfront.CloudFront
 }
 

@@ -37,8 +37,8 @@ type BrokerSuite struct {
 	suite.Suite
 	suite.SetupTestSuite
 	Broker   *DomainBroker
-	Manager  routes.RouteManager
-	Settings types.Settings
+	Manager  routes.RouteManagerSettings
+	Settings types.RuntimeSettings
 
 	DB     *gorm.DB
 	Gravel *gravel.Gravel
@@ -67,7 +67,7 @@ func (s *BrokerSuite) SetupTest() {
 	go s.Gravel.StartDnsServer()
 	go s.Gravel.StartWebServer()
 
-	settings := types.Settings{}
+	settings := types.RuntimeSettings{}
 	settings.AcmeUrl = fmt.Sprintf("https://%s%s", s.Gravel.Opts.ListenAddress, s.Gravel.Opts.WfeOpts.DirectoryPath)
 	settings.Email = "cloud-gov-operations@gsa.gov"
 	resolvers := make(map[string]string)
@@ -137,8 +137,8 @@ func (s *BrokerSuite) SetupTest() {
 func (s *BrokerSuite) TearDownTest() {
 	// clear everything so it can be rebuilt on the next test.
 	s.Broker = &DomainBroker{}
-	s.Manager = routes.RouteManager{}
-	s.Settings = types.Settings{}
+	s.Manager = routes.RouteManagerSettings{}
+	s.Settings = types.RuntimeSettings{}
 	s.DB = &gorm.DB{}
 
 	if err := s.Gravel.CertificateServer.Shutdown(context.TODO()); err != nil {

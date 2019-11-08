@@ -18,7 +18,7 @@ func TestHTTPHandler(t *testing.T) {
 		lager.NewLogger("main.test"),
 		brokerapi.BrokerCredentials{},
 	)
-	handler := bindHTTPHandlers(brokerAPI, types.Settings{})
+	handler := bindHTTPHandlers(brokerAPI, types.RuntimeSettings{})
 	req, err := http.NewRequest("GET", "http://example.com/healthcheck/http", nil)
 	if err != nil {
 		t.Error("Building new HTTP request: error should not have occurred")
