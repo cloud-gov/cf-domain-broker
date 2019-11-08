@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"code.cloudfoundry.org/lager"
@@ -70,6 +71,7 @@ type WorkerManager struct {
 	deprovisioningErrorMap map[string]error
 	elbs                   []*elb
 	logger                 lager.Logger
+	lock sync.RWMutex
 }
 
 type elb struct {
@@ -126,51 +128,51 @@ func (w *WorkerManager) Run() {
 		}
 	}()
 
-	ticker := time.NewTicker(w.settings.ElbUpdateFrequencyInSeconds * time.Second)
-
-	// background function to keep the internal elb certs on listener up to date.
-	// runs every so often.
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				// get a list of elbs.
-				resp, err := w.settings.ElbSvc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{})
-				if err != nil {
-					w.logger.Error("describe-load-balancers", err)
-				}
-				for idx := range resp.LoadBalancers {
-					// nil check because you have to every single time you do anything in aws...
-					if resp.LoadBalancers[idx] != nil {
-						lresp, err := w.settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
-							LoadBalancerArn: resp.LoadBalancers[idx].LoadBalancerArn,
-						})
-						if err != nil {
-							w.logger.Error("describe-elb-listeners", err, lager.Data{
-								"elb-target-arn": resp.LoadBalancers[idx].LoadBalancerArn,
-							})
-						}
-
-						var certsOnListener int
-						for nidx := range lresp.Listeners {
-							if lresp.Listeners[nidx] != nil {
-								certsOnListener += len(lresp.Listeners[nidx].Certificates)
-							}
-						}
-
-						w.elbs = append(w.elbs, &elb{lb: resp.LoadBalancers[idx], certsOnListener: certsOnListener})
-					}
-				}
-			}
-		}
-	}()
-
 	// start our listeners/runners
+	go w.elbPopulator()
 	w.provisionRunner()
 	w.getInstanceRunner()
 	w.lastOperationRunner()
 	w.dnsInstructionsRunner()
 	w.deprovisionRunner()
+}
+
+func (w *WorkerManager) elbPopulator() {
+	ticker := time.NewTicker(w.settings.ElbUpdateFrequencyInSeconds * time.Second)
+
+	// background function to keep the internal elb certs on listener up to date.
+	// runs every so often.
+	for ; true; <-ticker.C {
+		// get a list of elbs.
+		resp, err := w.settings.ElbSvc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{})
+		if err != nil {
+			w.logger.Error("describe-load-balancers", err)
+		}
+		for idx := range resp.LoadBalancers {
+			// nil check because you have to every single time you do anything in aws...
+			if resp.LoadBalancers[idx] != nil {
+				lresp, err := w.settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
+					LoadBalancerArn: resp.LoadBalancers[idx].LoadBalancerArn,
+				})
+				if err != nil {
+					w.logger.Error("describe-elb-listeners", err, lager.Data{
+						"elb-target-arn": resp.LoadBalancers[idx].LoadBalancerArn,
+					})
+				}
+
+				var certsOnListener int
+				for nidx := range lresp.Listeners {
+					if lresp.Listeners[nidx] != nil {
+						certsOnListener += len(lresp.Listeners[nidx].Certificates)
+					}
+				}
+
+				w.lock.Lock()
+				w.elbs = append(w.elbs, &elb{lb: resp.LoadBalancers[idx], certsOnListener: certsOnListener})
+				w.lock.Unlock()
+			}
+		}
+	}
 }
 
 type ProvisionRequest struct {
@@ -344,8 +346,28 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		}
 		lsession.Info("certificate-uploaded-to-iam")
 
+		if certArn.ServerCertificateMetadata.Arn == nil {
+			err := errors.New("nil pointer dereference")
+			lsession.Error("iam-server-certificate-arn-empty", err)
+			w.provisioningErrorMap[msg.InstanceId] = err
+			return
+		}
+
 		//save cert ARN
-		localCert.ARN = *certArn.ServerCertificateMetadata.Arn
+		localCert.ARN = *(certArn.ServerCertificateMetadata.Arn)
+		if w.settings.LogLevel == 1 {
+			if err := w.settings.Db.Debug().Model(&localCert).Where("instance_id = ?", msg.InstanceId).Save(&localCert).Error; err != nil {
+				lsession.Error("db-update-certificate-arn", err)
+				w.provisioningErrorMap[msg.InstanceId] = err
+				return
+			}
+		} else {
+			if err := w.settings.Db.Model(&localCert).Where("instance_id = ?", msg.InstanceId).Save(&localCert).Error; err != nil {
+				lsession.Error("db-update-certificate-arn", err)
+				w.provisioningErrorMap[msg.InstanceId] = err
+				return
+			}
+		}
 
 		// grab the listeners.
 		listeners, err := w.settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
@@ -478,7 +500,8 @@ func (w *WorkerManager) deprovision(msg DeprovisionRequest, resp chan<- Deprovis
 
 	getInstanceResponse := <-getInstanceRespc
 	getInstanceResponse.Route.State = cfdomainbroker.Deprovisioning
-	if err := w.settings.Db.Update(&getInstanceResponse).Error; err != nil {
+	if err := w.settings.Db.Where("instance_id = ?", msg.InstanceId).Save(&getInstanceResponse.Route).Error; err != nil {
+		w.logger.Error("db-update-deprovisioning-state", err)
 		w.deprovisioningErrorMap[msg.InstanceId] = err
 		return
 	}
@@ -489,7 +512,7 @@ func (w *WorkerManager) deprovision(msg DeprovisionRequest, resp chan<- Deprovis
 	})
 
 	var localCert models.Certificate
-	result := w.settings.Db.First(&localCert, &models.Certificate{InstanceId: msg.InstanceId})
+	result := w.settings.Db.Where("instance_id = ?", msg.InstanceId).Find(&localCert)
 
 	if result.RecordNotFound() {
 		lsession.Error("db-certificate-not-found", result.Error)
@@ -504,7 +527,7 @@ func (w *WorkerManager) deprovision(msg DeprovisionRequest, resp chan<- Deprovis
 	lsession.Info("disabling-route")
 
 	var localRoute models.DomainRoute
-	result = w.settings.Db.First(&localRoute, &models.DomainRoute{InstanceId: msg.InstanceId})
+	result = w.settings.Db.Where("instance_id = ?", msg.InstanceId).Find(&localRoute)
 
 	if result.RecordNotFound() {
 		lsession.Error("db-route-not-found", result.Error)
@@ -522,6 +545,7 @@ func (w *WorkerManager) deprovision(msg DeprovisionRequest, resp chan<- Deprovis
 			{CertificateArn: aws.String(localCert.ARN)},
 		},
 	}); err != nil {
+		w.logger.Error("elb-remove-listener-certificate-failed", err)
 		w.deprovisioningErrorMap[msg.InstanceId] = err
 		return
 	}
@@ -541,27 +565,32 @@ func (w *WorkerManager) deprovision(msg DeprovisionRequest, resp chan<- Deprovis
 		break
 	}
 
-	result = w.settings.Db.Delete(&localCert)
-
-	if result.RecordNotFound() {
-		lsession.Error("db-certificate-not-found", result.Error)
-		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
-		return
-	} else if result.Error != nil {
-		lsession.Error("db-generic-error", result.Error)
-		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
-		return
-	}
+	lsession.Info("deprovisioning-service-instance")
 
 	// keep the old service instance around, but mark it as deprovisioned.
+	// todo (mxplusb): determine if we want to clean up old records or keep them, for now we are keeping them
 	localRoute.State = cfdomainbroker.Deprovisioned
-	result = w.settings.Db.Update(&localRoute)
-
+	result = w.settings.Db.Where("instance_id = ?", msg.InstanceId).Save(&localRoute)
 	if result.Error != nil {
 		lsession.Error("db-generic-error", result.Error)
 		w.deprovisioningErrorMap[msg.InstanceId] = result.Error
 		return
 	}
+
+	lsession.Info("deprovisioned-service-instance")
+
+	// todo (mxplusb): determine whether or not to keep old certs.
+	//result = w.settings.Db.Delete(&localCert)
+	//
+	//if result.RecordNotFound() {
+	//	lsession.Error("db-certificate-not-found", result.Error)
+	//	w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+	//	return
+	//} else if result.Error != nil {
+	//	lsession.Error("db-generic-error", result.Error)
+	//	w.deprovisioningErrorMap[msg.InstanceId] = result.Error
+	//	return
+	//}
 
 	resp <- localResp
 }
@@ -611,7 +640,7 @@ func (w *WorkerManager) getInstance(msg GetInstanceRequest, resp chan<- GetInsta
 	}
 
 	var localRoute models.DomainRoute
-	result := w.settings.Db.First(&localRoute, &models.DomainRoute{InstanceId: msg.InstanceId})
+	result := w.settings.Db.Where("instance_id = ?", msg.InstanceId).Find(&localRoute)
 	if result.RecordNotFound() {
 		lsession.Error("db-record-not-found", apiresponses.ErrInstanceDoesNotExist)
 		localResp.Error = result.Error

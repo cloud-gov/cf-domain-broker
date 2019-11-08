@@ -142,11 +142,11 @@ func (s *BrokerSuite) SetupTest() {
 
 func (s *BrokerSuite) TearDownTest() {
 	// clear everything so it can be rebuilt on the next test.
-	s.DomainBrokerSettings  = &DomainBrokerSettings{}
-	s.DomainBroker          = &DomainBroker{}
+	s.DomainBrokerSettings = &DomainBrokerSettings{}
+	s.DomainBroker = &DomainBroker{}
 	s.WorkerManagerSettings = &routes.WorkerManagerSettings{}
-	s.WorkerManager         = &routes.WorkerManager{}
-	s.RuntimeSettings       = &types.RuntimeSettings{}
+	s.WorkerManager = &routes.WorkerManager{}
+	s.RuntimeSettings = &types.RuntimeSettings{}
 
 	if err := s.DB.Close(); err != nil {
 		s.Require().NoError(err, "there should not be an error closing the test db")
@@ -224,18 +224,13 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 		RawParameters: []byte(fmt.Sprintf(`{"domains": ["test.service"]}`)),
 	}
 
-	// run in the background until we verify the DNS records exist in the DB, which is the equivalent of a user going
-	// and adding the TXT records of their DNS server. once we verify the records, this should continue in the
-	// background. we have to do this because otherwise it blocks.
-	go func(s *BrokerSuite) {
-		res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
-		if err != nil {
-			s.Require().NoError(err, "provisioning should not throw an error")
-		}
-		s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
-	}(s)
+	res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
+	if err != nil {
+		s.Require().NoError(err, "provisioning should not throw an error")
+	}
+	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
-	// sleep for a bit to let the cert get issues and the db store things.
+	// sleep for a bit to let the cert get issued and the db store things.
 	time.Sleep(time.Second * 5)
 
 	localDomainMessenger := leproviders.DomainMessenger{
@@ -275,7 +270,6 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	s.Require().NotEmpty(localCert.PrivateKey, "the private key should not be empty")
 }
 
-// todo (mxplusb): clean up test names
 func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleSAN() {
 	b := s.DomainBroker
 
@@ -294,6 +288,9 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleSAN() 
 		s.Require().NoError(err, "provisioning should not throw an error")
 	}
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
+
+	// sleep a bit to let the workers do their thing.
+	time.Sleep(time.Second * 15)
 
 	var verifyRoute models.DomainRoute
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).First(&verifyRoute).Error; err != nil {
@@ -400,6 +397,9 @@ func (s *BrokerSuite) TestDomainBroker_Deprovision() {
 	}
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
+	// sleep a bit to let the workers do their thing.
+	time.Sleep(time.Second * 5)
+
 	delResp, err := s.DomainBroker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
 		PlanID:    "",
 		ServiceID: "",
@@ -408,14 +408,17 @@ func (s *BrokerSuite) TestDomainBroker_Deprovision() {
 	s.Require().NoError(err, "there must not be an error deprovisioning the service instance")
 	s.Require().Equal(true, delResp.IsAsync, "deprovision must be async")
 
+	// sleep a bit to let the workers do their thing.
+	time.Sleep(time.Second * 5)
+
 	// verify the route does not exist in the db.
 	localRoute := models.DomainRoute{
 		InstanceId: serviceInstanceId,
 	}
 	dbResp := s.DB.Where("instance_id = ?", &localRoute.InstanceId).Find(&localRoute)
 
-	s.Require().Error(dbResp.Error, "there must be an error when querying the db because the record should not exist")
-	s.Require().Equal(dbResp.Error.Error(), "record not found", "the error must be 'record not found'")
+	s.Require().NoError(dbResp.Error, "there must not be an error when querying the db")
+	s.Require().Equal(cfdomainbroker.Deprovisioned, localRoute.State, "the state must be deprovisioned")
 }
 
 func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
@@ -435,6 +438,9 @@ func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
 	}
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
+	// sleep a bit to let the workers do their thing.
+	time.Sleep(time.Second * 5)
+
 	delResp, err := s.DomainBroker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
 		PlanID:    "",
 		ServiceID: "",
@@ -443,14 +449,17 @@ func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
 	s.Require().NoError(err, "there must not be an error deprovisioning the service instance")
 	s.Require().Equal(true, delResp.IsAsync, "deprovision must be async")
 
+	// sleep a bit to let the workers do their thing.
+	time.Sleep(time.Second * 5)
+
 	// verify the route does not exist in the db.
 	localRoute := models.DomainRoute{
 		InstanceId: serviceInstanceId,
 	}
 	dbResp := s.DB.Where("instance_id = ?", &localRoute.InstanceId).Find(&localRoute)
 
-	s.Require().Error(dbResp.Error, "there must be an error when querying the db because the record should not exist")
-	s.Require().Equal(dbResp.Error.Error(), "record not found", "the error must be 'record not found'")
+	s.Require().NoError(dbResp.Error, "there must not be an error when querying the db")
+	s.Require().Equal(cfdomainbroker.Deprovisioned, localRoute.State, "the state must be deprovisioned")
 }
 
 func (s *BrokerSuite) TestDomainBroker_Services() {
@@ -460,28 +469,43 @@ func (s *BrokerSuite) TestDomainBroker_Services() {
 	s.Nil(err, "expected ")
 	s.Equal(1, len(res), "expected one service")        // one service
 	s.Equal(2, len(res[0].Plans), "expected two plans") //two plans
+
+	// sleep a bit to let the workers finish spinning up before the test ends.
+	time.Sleep(time.Second * 2)
 }
 
 func (s *BrokerSuite) TestDomainBroker_Bind() {
 	b := s.DomainBroker
 	_, err := b.Bind(context.Background(), "", "", domain.BindDetails{}, false)
 	s.NotNil(err, "expected error on bind")
+
+	// sleep a bit to let the workers finish spinning up before the test ends.
+	time.Sleep(time.Second * 2)
 }
 
 func (s *BrokerSuite) TestDomainBroker_Unbind() {
 	b := s.DomainBroker
 	_, err := b.Unbind(context.Background(), "", "", domain.UnbindDetails{}, false)
-	s.NotNil(err, "expected error on unbind")
+	s.Error(err, "expected error on unbind")
+
+	// sleep a bit to let the workers finish spinning up before the test ends.
+	time.Sleep(time.Second * 2)
 }
 
 func (s *BrokerSuite) TestDomainBroker_GetBinding() {
 	b := s.DomainBroker
 	_, err := b.GetBinding(context.Background(), "", "")
 	s.NotNil(err, "expected error on get binding")
+
+	// sleep a bit to let the workers finish spinning up before the test ends.
+	time.Sleep(time.Second * 2)
 }
 
 func (s *BrokerSuite) TestDomainBroker_LastBindingOperation() {
 	b := s.DomainBroker
 	_, err := b.LastBindingOperation(context.Background(), "", "", domain.PollDetails{})
 	s.NotNil(err, "expected error on last binding operation")
+
+	// sleep a bit to let the workers finish spinning up before the test ends.
+	time.Sleep(time.Second * 2)
 }

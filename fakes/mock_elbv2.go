@@ -469,17 +469,19 @@ func (elb *MockELBV2API) RegisterTargetsRequest(*elbv2.RegisterTargetsInput) (*r
 }
 
 func (elb *MockELBV2API) RemoveListenerCertificates(input *elbv2.RemoveListenerCertificatesInput) (*elbv2.RemoveListenerCertificatesOutput, error) {
-	// for each elb
+	// for each listener
 	for idx := range elb.Listeners {
 		// if the listener arn is the same as the one we want
-		if elb.Listeners[idx].ListenerArn == input.ListenerArn {
+		if *elb.Listeners[idx].ListenerArn == *input.ListenerArn {
 			// for each certificate on the listener
 			for nidx := range elb.Listeners[idx].Certificates {
 				// if the certificate on the listener is the same one we want to remove
-				if elb.Listeners[idx].Certificates[nidx].CertificateArn == input.Certificates[0].CertificateArn {
-					// remove it from the internal slice reference.
-					elb.Listeners[idx].Certificates = append(elb.Listeners[idx].Certificates[:nidx], elb.Listeners[idx].Certificates[nidx+1:]...)
-					return &elbv2.RemoveListenerCertificatesOutput{}, nil
+				if elb.Listeners[idx].Certificates[nidx] != nil {
+					if *elb.Listeners[idx].Certificates[nidx].CertificateArn == *input.Certificates[0].CertificateArn {
+						// remove it from the internal slice reference.
+						elb.Listeners[idx].Certificates = append(elb.Listeners[idx].Certificates[:nidx], elb.Listeners[idx].Certificates[nidx+1:]...)
+						return &elbv2.RemoveListenerCertificatesOutput{}, nil
+					}
 				}
 			}
 		}
