@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+// todo (mxplusb): implement fuzzing for better coverage.
+
 // DomainBroker test entry point.
 func TestBrokerSuite(t *testing.T) {
 	suite.Run(t, new(BrokerSuite))
@@ -187,7 +189,7 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 	time.Sleep(time.Second * 5)
 
 	var verifyRoute models.DomainRoute
-	if err := s.DB.Where("instance_id = ?", serviceInstanceId).First(&verifyRoute).Error; err != nil {
+	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&verifyRoute).Error; err != nil {
 		s.Require().NoError(err, "there should be no error querying for the domain route")
 	}
 
@@ -233,10 +235,8 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	// sleep for a bit to let the cert get issued and the db store things.
 	time.Sleep(time.Second * 5)
 
-	localDomainMessenger := leproviders.DomainMessenger{
-		Domain: "test.service",
-	}
-	if err := s.DB.Where("domain = ?", localDomainMessenger.Domain).Find(&localDomainMessenger).Error; err != nil {
+	var localDomainMessenger leproviders.DomainMessenger
+	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessenger).Error; err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
 	}
 
@@ -330,16 +330,11 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 		RawParameters: []byte(fmt.Sprintf(`{"domains": ["test.service", "test2.service", "test3.service"]}`)),
 	}
 
-	// run in the background until we verify the DNS records exist in the DB, which is the equivalent of a user going
-	// and adding the TXT records of their DNS server. once we verify the records, this should continue in the
-	// background. we have to do this because otherwise it blocks.
-	go func(s *BrokerSuite) {
-		res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
-		if err != nil {
-			s.Require().NoError(err, "provisioning should not throw an error")
-		}
-		s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
-	}(s)
+	res, err := s.DomainBroker.Provision(context.Background(), serviceInstanceId, d, true)
+	if err != nil {
+		s.Require().NoError(err, "provisioning should not throw an error")
+	}
+	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep for a bit to let the cert get issues and the db store things.
 	time.Sleep(time.Second * 5)

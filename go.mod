@@ -7,7 +7,7 @@ require (
 	code.cloudfoundry.org/lager v2.0.0+incompatible
 	github.com/18F/cf-cdn-service-broker v0.0.0-20190603161008-b2df4416bef5 // indirect
 	github.com/18F/cf-domain-broker-alb v0.0.0-20190801182336-1085344d9032
-	github.com/18f/gravel v0.0.0-20191108175620-b2d26b1f60b2
+	github.com/18f/gravel v0.0.0-20191108205842-be9f275d6d6f
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/aws/aws-sdk-go v1.25.30
 	github.com/cloudfoundry-community/go-cfclient v0.0.0-20190808214049-35bcce23fc5f

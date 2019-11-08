@@ -178,8 +178,9 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 		return spec, apiresponses.ErrInstanceAlreadyExists
 	} else if resp.Error != nil {
 		lsession.Error("error-checking-existing-action", resp.Error)
-		if resp.Error.Error() != "record not found" {
-			return spec, apiresponses.NewFailureResponse(resp.Error, http.StatusInternalServerError, "error-checking-existing-action")
+		if !resp.ErrorNotFound {
+			lsession.Error("generic-error-checking-existing-action", resp.Error)
+			return spec, apiresponses.NewFailureResponse(resp.Error, http.StatusInternalServerError, "generic-error-checking-existing-action")
 		}
 	}
 

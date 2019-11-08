@@ -71,7 +71,7 @@ type WorkerManager struct {
 	deprovisioningErrorMap map[string]error
 	elbs                   []*elb
 	logger                 lager.Logger
-	lock sync.RWMutex
+	lock                   sync.RWMutex
 }
 
 type elb struct {
@@ -223,7 +223,13 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 
 	// if we need to store the challenge for later upstream, create a new provider.
 	if w.settings.PersistentDnsProvider == true {
-		w.settings.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(w.settings.Db, w.logger, msg.InstanceId)
+		sbdnspSettings := &leproviders.ServiceBrokerDnsProviderSettings{
+			Db:         w.settings.Db,
+			Logger:     w.logger,
+			InstanceId: msg.InstanceId,
+			LogLevel:   w.settings.LogLevel,
+		}
+		w.settings.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(sbdnspSettings)
 	}
 
 	acmeClient, err := leproviders.NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
@@ -603,8 +609,9 @@ type GetInstanceRequest struct {
 }
 
 type GetInstanceResponse struct {
-	Route models.DomainRoute
-	Error error
+	Route         models.DomainRoute
+	Error         error
+	ErrorNotFound bool
 }
 
 func (w *WorkerManager) getInstanceRunner() {
@@ -620,7 +627,8 @@ func (w *WorkerManager) getInstance(msg GetInstanceRequest, resp chan<- GetInsta
 	lsession := w.logger.Session("get-instance")
 
 	localResp := GetInstanceResponse{
-		Error: nil,
+		Error:         nil,
+		ErrorNotFound: false,
 	}
 
 	// if the instance id is in the provisioning error map, then there was a certificate provisioning error and we
@@ -644,6 +652,7 @@ func (w *WorkerManager) getInstance(msg GetInstanceRequest, resp chan<- GetInsta
 	if result.RecordNotFound() {
 		lsession.Error("db-record-not-found", apiresponses.ErrInstanceDoesNotExist)
 		localResp.Error = result.Error
+		localResp.ErrorNotFound = true
 		resp <- localResp
 		return
 	} else if result.Error != nil {

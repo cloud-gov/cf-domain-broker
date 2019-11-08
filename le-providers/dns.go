@@ -13,16 +13,29 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
+type ServiceBrokerDnsProviderSettings struct {
+	Db         *gorm.DB
+	Logger     lager.Logger
+	InstanceId string
+	LogLevel   int
+}
+
 // Internal DNS provider.
 type ServiceBrokerDNSProvider struct {
 	// db access
 	db         *gorm.DB
 	logger     lager.Logger
 	instanceId string
+	settings   *ServiceBrokerDnsProviderSettings
 }
 
-func NewServiceBrokerDNSProvider(db *gorm.DB, logger lager.Logger, instanceId string) *ServiceBrokerDNSProvider {
-	return &ServiceBrokerDNSProvider{db: db, logger: logger.Session("service-broker-dns-provider", lager.Data{"instance_id": instanceId}), instanceId: instanceId}
+func NewServiceBrokerDNSProvider(settings *ServiceBrokerDnsProviderSettings) *ServiceBrokerDNSProvider {
+	return &ServiceBrokerDNSProvider{
+		db:         settings.Db,
+		logger:     settings.Logger.Session("service-broker-dns-provider", lager.Data{"instance_id": settings.InstanceId}),
+		instanceId: settings.InstanceId,
+		settings:   settings,
+	}
 }
 
 // Set our default timeout to be 24 hours and check every 3 minutes.
@@ -63,8 +76,10 @@ func (d DomainMessenger) String() string {
 
 // Present our credentials to the handler.
 func (s ServiceBrokerDNSProvider) Present(domain, token, keyAuth string) error {
+
 	keyAuthShaBytes := sha256.Sum256([]byte(keyAuth))
 	value := base64.RawURLEncoding.EncodeToString(keyAuthShaBytes[:sha256.Size])
+
 	authRecord := DomainMessenger{
 		Domain:     domain,
 		Token:      token,
@@ -75,11 +90,21 @@ func (s ServiceBrokerDNSProvider) Present(domain, token, keyAuth string) error {
 	s.logger.Debug("present-dns-challenge", lager.Data{
 		"record": authRecord,
 	})
-	if err := s.db.Create(&authRecord).Error; err != nil {
-		s.logger.Error("db-store-dns-challenge", err, lager.Data{
-			"record": authRecord,
-		})
-		return err
+
+	if s.settings.LogLevel == 1 {
+		if err := s.db.Debug().Create(&authRecord).Error; err != nil {
+			s.logger.Error("db-debug-store-dns-challenge", err, lager.Data{
+				"record": authRecord,
+			})
+			return err
+		}
+	} else {
+		if err := s.db.Create(&authRecord).Error; err != nil {
+			s.logger.Error("db-store-dns-challenge", err, lager.Data{
+				"record": authRecord,
+			})
+			return err
+		}
 	}
 	return nil
 }
