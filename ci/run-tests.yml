@@ -1,0 +1,15 @@
+---
+platform: linux
+
+image_resource:
+  type: docker-image
+  source:
+    repository: golang
+    tag: "1.13"
+
+inputs:
+- name: broker-src
+  path: gopath/src/github.com/18F/cf-domain-broker
+
+run:
+  path: gopath/src/github.com/18F/cf-domain-broker/ci/run-tests.sh
