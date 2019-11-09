@@ -1,19 +1,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/18f/cf-domain-broker/broker"
-	"github.com/18f/cf-domain-broker/interfaces"
 	le_providers "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/service/cloudfront"
-	"github.com/cloudfoundry-community/go-cfclient"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"github.com/kelseyhightower/envconfig"
@@ -27,93 +29,158 @@ import (
 	"code.cloudfoundry.org/lager"
 )
 
-// todo (mxplusb): make this more cf friendly.
+// todo (mxplusb): ensure server can restart while working on authorization
+
+var (
+	settings *types.GlobalSettings
+)
+
 func main() {
+	run()
+}
+
+func run() {
+	domainBroker := initBrokerConfig()
+	brokerCapiCredentials := brokerapi.BrokerCredentials{
+		Username: settings.RuntimeSettings.BrokerUsername,
+		Password: settings.RuntimeSettings.BrokerPassword,
+	}
+
+	brokerApi := brokerapi.New(domainBroker, settings.Logger, brokerCapiCredentials)
+	handlers := bindHTTPHandlers(brokerApi)
+
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	srv := http.Server{
+		Addr:    fmt.Sprintf(":%s", settings.RuntimeSettings.Port),
+		Handler: handlers,
+	}
+
+	go func() {
+		http.Handle("/", handlers)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			settings.Logger.Fatal("http-server-error", err)
+		}
+	}()
+
+	// block forever
+	<-done
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+	defer func() {
+		cancel()
+	}()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		settings.Logger.Fatal("server-not-stopping-cleanly", err)
+	}
+	settings.Logger.Info("goodbye")
+}
+
+// todo (mxplusb): make this more cf friendly.
+func initBrokerConfig() *broker.DomainBroker {
 	// before anything else, we need to grab our config so we know what to do.
-	var settings types.RuntimeSettings
-	err := envconfig.Process("", &settings)
+	var runtimeSettings types.RuntimeSettings
+	err := envconfig.Process("", &runtimeSettings)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("cannot read environment variables for configuration, %s", err))
 	}
 
-	// now that we have our config, we can start instantiating.
-	logger := lager.NewLogger("domain-broker")
+	// set up our logging writers.
+	debugSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
+	normalSink := lager.NewPrettySink(os.Stdout, lager.INFO)
+	errorSink := lager.NewPrettySink(os.Stderr, lager.ERROR)
+	fatalSink := lager.NewPrettySink(os.Stderr, lager.FATAL)
 
-	sink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
-	logger.RegisterSink(sink)
+	logger := lager.NewLogger("main")
+	logger.RegisterSink(debugSink)
+	logger.RegisterSink(normalSink)
+	logger.RegisterSink(errorSink)
+	logger.RegisterSink(fatalSink)
 
-	loggerSession := logger.Session("main")
-
-	db, err := gorm.Open("postgres", settings.DatabaseUrl)
+	// open up the database and prepare it
+	db, err := gorm.Open("postgres", runtimeSettings.DatabaseUrl)
 	if err != nil {
-		loggerSession.Fatal("db-connection-builder", err)
+		logger.Fatal("db-connection-builder", err)
 	}
-
-	session := session.New(aws.NewConfig().WithRegion(settings.AwsDefaultRegion))
-
 	if err := db.AutoMigrate(&models.DomainRoute{},
 		&models.UserData{},
 		&models.Domain{},
 		&models.Certificate{},
 		&le_providers.DomainMessenger{}).Error; err != nil {
-		loggerSession.Fatal("db-auto-migrate", err)
+		logger.Fatal("db-auto-migrate", err)
 	}
 
-	rms := loggerSession.Session("route-manager")
-	routeManager, err := routes.NewManager(rms,
-		types.IAM{
-			Settings: settings,
-			Service:  iam.New(session)}.Service,
-		&interfaces.CloudfrontDistribution{
-			Settings: settings,
-			Service:  cloudfront.New(session),
-		},
-		elbv2.New(session),
-		settings,
-		db,
-		true)
-	if err != nil {
-		loggerSession.Fatal("create-route-manager", err)
+	// prep our AWS session.
+	sess, err := session.NewSession(
+		aws.NewConfig().WithCredentials(
+			credentials.NewEnvCredentials()).WithRegion(
+			runtimeSettings.AwsDefaultRegion))
 
-	}
-	domainBroker := broker.NewDomainBroker(&routeManager, loggerSession)
-
-	credentials := brokerapi.BrokerCredentials{
-		Username: settings.BrokerUsername,
-		Password: settings.BrokerPassword,
-	}
-
-	if err := routeManager.Populate(); err != nil {
-		logger.Fatal("populate", err)
+	workerManagerSettings := &routes.WorkerManagerSettings{
+		AutostartWorkerPool:         true,
+		AcmeHttpClient:              http.DefaultClient,
+		AcmeUrl:                     runtimeSettings.AcmeUrl,
+		AcmeEmail:                   runtimeSettings.Email,
+		Db:                          db,
+		IamSvc:                      iam.New(sess),
+		CloudFront:                  cloudfront.New(sess),
+		ElbSvc:                      elbv2.New(sess),
+		ElbUpdateFrequencyInSeconds: 15,
+		PersistentDnsProvider:       true,
+		DnsChallengeProvider:        nil,
+		Resolvers:                   runtimeSettings.Resolvers,
+		LogLevel:                    runtimeSettings.LogLevel,
+		Logger:                      logger,
 	}
 
-	brokerAPI := brokerapi.New(domainBroker, logger, credentials)
-	server := bindHTTPHandlers(brokerAPI, settings)
-	http.ListenAndServe(fmt.Sprintf(":%s", settings.Port), server)
+	workerManager := routes.NewWorkerManager(workerManagerSettings)
+
+	domainBrokerSettings := &broker.DomainBrokerSettings{
+		Db:            db,
+		Logger:        logger,
+		WorkerManager: workerManager,
+	}
+
+	settings = &types.GlobalSettings{
+		Db:                    db,
+		Logger:                logger,
+		RuntimeSettings:       runtimeSettings,
+		IamSvc:                iam.New(sess),
+		CloudFront:            cloudfront.New(sess),
+		ElbSvc:                elbv2.New(sess),
+		PersistentDnsProvider: true,
+		DnsChallengeProvider:  nil,
+		AcmeHttpClient:        http.DefaultClient,
+		Resolvers:             runtimeSettings.Resolvers,
+	}
+
+	return broker.NewDomainBroker(domainBrokerSettings)
 }
 
-func bindHTTPHandlers(handler http.Handler, settings types.RuntimeSettings) http.Handler {
+func bindHTTPHandlers(handler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
-	Bind(mux, settings)
+	Bind(mux)
 
 	return mux
 }
 
-var checks = map[string]func(types.RuntimeSettings) error{
-	"cloudfoundry": Cloudfoundry,
-	"postgresql":   Postgresql,
-}
+//var checks = map[string]func(types.RuntimeSettings) error{
+//	"cloudfoundry": Cloudfoundry,
+//	"postgresql":   Postgresql,
+//}
 
-func Bind(mux *http.ServeMux, settings types.RuntimeSettings) {
-	mux.HandleFunc("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
+// todo (mxplusb): fix the health checks to be more comprehensive
+func Bind(mux *http.ServeMux) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		body := ""
-		for name, function := range checks {
-			err := function(settings)
-			if err != nil {
-				body = body + fmt.Sprintf("%s error: %s\n", name, err)
-			}
-		}
+		//for name, function := range checks {
+		//	err := function(settings)
+		//	if err != nil {
+		//		body = body + fmt.Sprintf("%s error: %s\n", name, err)
+		//	}
+		//}
 		if body != "" {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "%s", body)
@@ -121,49 +188,32 @@ func Bind(mux *http.ServeMux, settings types.RuntimeSettings) {
 			w.WriteHeader(http.StatusOK)
 		}
 	})
-
-	mux.HandleFunc("/healthcheck/http", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	for name, function := range checks {
-		mux.HandleFunc("/healthcheck/"+name, func(w http.ResponseWriter, r *http.Request) {
-			err := function(settings)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, "%s error: %s", name, err)
-			} else {
-				w.WriteHeader(http.StatusOK)
-			}
-		})
-	}
 }
 
-func Postgresql(settings types.RuntimeSettings) error {
-	db, err := gorm.Open("postgres", settings.DatabaseUrl)
-	defer db.Close()
+//func Postgresql() {
+//	db := settings.Db.DB()
+//
+//	ticker := time.NewTicker(time.Second * 5)
+//
+//	for ; true; <-ticker.C {
+//		return db.Ping()
+//	}
+//}
 
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func Cloudfoundry(settings types.RuntimeSettings) error {
-	// We're only validating that the CF endpoint is contactable here, as
-	// testing the authentication is tricky
-	_, err := cfclient.NewClient(&cfclient.Config{
-		ApiAddress:   settings.APIAddress,
-		ClientID:     settings.ClientID,
-		ClientSecret: settings.ClientSecret,
-		HttpClient: &http.Client{
-			Timeout: time.Second * 10,
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
+//func Cloudfoundry(settings types.RuntimeSettings) error {
+//	// We're only validating that the CF endpoint is contactable here, as
+//	// testing the authentication is tricky
+//	_, err := cfclient.NewClient(&cfclient.Config{
+//		ApiAddress:   settings.APIAddress,
+//		ClientID:     settings.ClientID,
+//		ClientSecret: settings.ClientSecret,
+//		HttpClient: &http.Client{
+//			Timeout: time.Second * 10,
+//		},
+//	})
+//	if err != nil {
+//		return err
+//	}
+//
+//	return nil
+//}

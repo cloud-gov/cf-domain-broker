@@ -7,19 +7,18 @@ import (
 
 	"code.cloudfoundry.org/lager"
 	"github.com/18f/cf-domain-broker/broker"
-	"github.com/18f/cf-domain-broker/types"
 	"github.com/pivotal-cf/brokerapi"
 )
 
-// todo (mxplusb): figure this out and how it's relevant
+// todo (mxplusb): use httptest for this
 func TestHTTPHandler(t *testing.T) {
 	brokerAPI := brokerapi.New(
 		&broker.DomainBroker{},
 		lager.NewLogger("main.test"),
 		brokerapi.BrokerCredentials{},
 	)
-	handler := bindHTTPHandlers(brokerAPI, types.RuntimeSettings{})
-	req, err := http.NewRequest("GET", "http://example.com/healthcheck/http", nil)
+	handler := bindHTTPHandlers(brokerAPI)
+	req, err := http.NewRequest("GET", "http://example.com/healthz", nil)
 	if err != nil {
 		t.Error("Building new HTTP request: error should not have occurred")
 	}
