@@ -29,3 +29,4 @@ _testmain.go
 
 .idea/
 /broker/testdata/
+/ci/credentials.yml

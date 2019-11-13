@@ -1,23 +1,22 @@
 ---
-meta:
-  cf-creds-development: &cf-creds-development
-    CF_API_URL: ((cf-api-url-development))
-    CF_USERNAME: ((cf-deploy-username-development))
-    CF_PASSWORD: ((cf-deploy-password-development))
-    CF_ORGANIZATION: ((cf-organization-development))
-    CF_SPACE: ((cf-space-development))
-  cf-creds-staging: &cf-creds-staging
-    CF_API_URL: ((cf-api-url-staging))
-    CF_USERNAME: ((cf-deploy-username-staging))
-    CF_PASSWORD: ((cf-deploy-password-staging))
-    CF_ORGANIZATION: ((cf-organization-staging))
-    CF_SPACE: ((cf-space-staging))
-  cf-creds-production: &cf-creds-production
-    CF_API_URL: ((cf-api-url-production))
-    CF_USERNAME: ((cf-deploy-username-production))
-    CF_PASSWORD: ((cf-deploy-password-production))
-    CF_ORGANIZATION: ((cf-organization-production))
-    CF_SPACE: ((cf-space-production))
+cf-creds-development: &cf-creds-development
+  CF_API_URL: ((cf-api-url-development))
+  CF_USERNAME: ((cf-deploy-username-development))
+  CF_PASSWORD: ((cf-deploy-password-development))
+  CF_ORGANIZATION: ((cf-organization-development))
+  CF_SPACE: ((cf-space-development))
+cf-creds-staging: &cf-creds-staging
+  CF_API_URL: ((cf-api-url-staging))
+  CF_USERNAME: ((cf-deploy-username-staging))
+  CF_PASSWORD: ((cf-deploy-password-staging))
+  CF_ORGANIZATION: ((cf-organization-staging))
+  CF_SPACE: ((cf-space-staging))
+cf-creds-production: &cf-creds-production
+  CF_API_URL: ((cf-api-url-production))
+  CF_USERNAME: ((cf-deploy-username-production))
+  CF_PASSWORD: ((cf-deploy-password-production))
+  CF_ORGANIZATION: ((cf-organization-production))
+  CF_SPACE: ((cf-space-production))
 
 jobs:
 - name: test-domain-broker
@@ -26,7 +25,6 @@ jobs:
     trigger: true
   - task: run-tests
     file: broker-src/ci/run-tests.yml
-
 - name: deploy-development
   plan:
   - aggregate:
@@ -34,19 +32,11 @@ jobs:
       passed: [test-domain-broker]
       trigger: true
     - get: pipeline-tasks
-  - task: create-db
-    file: broker-src/ci/create-db.yml
-    params:
-      # Note: Name must match service name in manifest
-      SERVICE_TYPE: aws-rds
-      SERVICE_NAME: rds-domain
-      SERVICE_PLAN: medium-psql
-      <<: *cf-creds-development
-  - aggregate:
+  - in_parallel:
     - put: broker-deploy-development
       params:
         path: broker-src
-        manifest: broker-src/manifest-broker.yml
+        manifest: broker-src/manifest.yml
         environment_variables: &cfenv-development
           BROKER_USERNAME: ((domain-broker-user-development))
           BROKER_PASSWORD: ((domain-broker-pass-development))
@@ -62,19 +52,14 @@ jobs:
           CLIENT_ID: ((domain-broker-client-id-development))
           CLIENT_SECRET: ((domain-broker-client-secret-development))
           DEFAULT_ORIGIN: ((domain-broker-default-origin-development))
-  #  - put: broker-deploy-development
-  #    params:
-  #      path: broker-src
-  #      manifest: broker-src/manifest-cron.yml
-  #      environment_variables: *cfenv-development
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
     params:
       <<: *cf-creds-development
       BROKER_NAME: domain-broker-v2
-      AUTH_USER: ((domain-broker-user-development))
-      AUTH_PASS: ((domain-broker-pass-development))
-      SERVICES: Custom-Domain-Broker
+      AUTH_USER: ((domain-broker-v2-user-development))
+      AUTH_PASS: ((domain-broker-v2-pass-development))
+      SERVICES: domain-broker-v2
   on_failure:
     put: slack
     params:

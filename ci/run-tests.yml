@@ -9,7 +9,7 @@ image_resource:
 
 inputs:
 - name: broker-src
-  path: gopath/src/github.com/18F/cf-domain-broker
+  path: cf-domain-broker
 
 run:
-  path: gopath/src/github.com/18F/cf-domain-broker/ci/run-tests.sh
+  path: cf-domain-broker/ci/run-tests.sh

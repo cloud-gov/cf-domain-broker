@@ -2,9 +2,7 @@
 
 set -eux
 
-export GOPATH=$(pwd)/gopath
-
-pushd gopath/src/github.com/18F/cf-domain-broker
+pushd cf-domain-broker
   go get -v -u ./...
-  go test -v
+  go test -v ./...
 popd
