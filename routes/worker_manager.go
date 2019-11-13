@@ -40,6 +40,7 @@ type WorkerManagerSettings struct {
 	Db                          *gorm.DB
 	IamSvc                      iamiface.IAMAPI
 	CloudFront                  cloudfrontiface.CloudFrontAPI
+	ElbNames                    []*string
 	ElbSvc                      elbv2iface.ELBV2API
 	ElbUpdateFrequencyInSeconds time.Duration
 	PersistentDnsProvider       bool
@@ -144,7 +145,9 @@ func (w *WorkerManager) elbPopulator() {
 	// runs every so often.
 	for ; true; <-ticker.C {
 		// get a list of elbs.
-		resp, err := w.settings.ElbSvc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{})
+		resp, err := w.settings.ElbSvc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{
+			Names: w.settings.ElbNames,
+		})
 		if err != nil {
 			w.logger.Error("describe-load-balancers", err)
 		}

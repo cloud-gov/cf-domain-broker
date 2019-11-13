@@ -117,6 +117,11 @@ func initBrokerConfig() *broker.DomainBroker {
 			credentials.NewEnvCredentials()).WithRegion(
 			runtimeSettings.AwsDefaultRegion))
 
+	var albNames []*string
+	for idx := range runtimeSettings.ALBNames {
+		albNames = append(albNames, aws.String(runtimeSettings.ALBNames[idx]))
+	}
+
 	workerManagerSettings := &routes.WorkerManagerSettings{
 		AutostartWorkerPool:         true,
 		AcmeHttpClient:              http.DefaultClient,
@@ -125,6 +130,7 @@ func initBrokerConfig() *broker.DomainBroker {
 		Db:                          db,
 		IamSvc:                      iam.New(sess),
 		CloudFront:                  cloudfront.New(sess),
+		ElbNames:                    albNames,
 		ElbSvc:                      elbv2.New(sess),
 		ElbUpdateFrequencyInSeconds: 15,
 		PersistentDnsProvider:       true,

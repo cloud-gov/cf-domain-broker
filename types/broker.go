@@ -37,6 +37,7 @@ type RuntimeSettings struct {
 	AwsAccessKeyId       string            `envconfig:"aws_access_key_id" required:"true"`
 	AwsSecretAccessKey   string            `envconfig:"aws_secret_access_key" required:"true"`
 	AwsDefaultRegion     string            `envconfig:"aws_default_region" required:"true"`
+	ALBNames             []string          `envconfig:"alb_names" required:"true"`
 	ServerSideEncryption string            `envconfig:"server_side_encryption"`
 	APIAddress           string            `envconfig:"api_address" required:"true"`
 	Resolvers            map[string]string `envconfig:"resolvers" default:"cloudflare:1.1.1.1"`
@@ -45,7 +46,6 @@ type RuntimeSettings struct {
 	DefaultOrigin        string            `envconfig:"default_origin" required:"true"`
 	Schedule             string            `envconfig:"schedule" default:"0 0 * * * *"`
 	MaxRoutes            int               `envconfig:"max_routes" default:"24"`
-	ALBPrefix            string            `envconfig:"alb_prefix" default:"domains-broker"`
 	RenewDays            int               `envconfig:"renew_days" default:"30"`
 
 	/*

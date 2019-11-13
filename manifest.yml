@@ -1,6 +1,6 @@
 ---
 applications:
-- name: cf-domain-test
+- name: cf-domain-broker
   command: cmd
   buildpack: go_buildpack
   memory: 128M
@@ -12,9 +12,9 @@ applications:
     EMAIL: cloud-gov-operations@gsa.gov
     ACME_URL: https://acme-staging-v02.api.letsencrypt.org/directory
     IAM_PATH_PREFIX: cg-staging-test
-    AWS_DEFAULT_REGION: us-east-1
+    AWS_DEFAULT_REGION: us-gov-west-1
     SERVER_SIDE_ENCRYPTION: AES256
     API_ADDRESS: https://api.fr-stage.cloud.gov
-    DEFAULT_ORIGIN: cf-domain-broker.fr-stage.cloud.gov
+    DEFAULT_ORIGIN: cf-domain-broker.dev.us-gov-west-1.aws-us-gov.cloud.gov
     LogLevel: 1
     RESOLVERS: "google:8.8.8.8,cloudflare:1.1.1.1"
