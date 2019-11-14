@@ -210,7 +210,7 @@ func Bind(mux *http.ServeMux) {
 //	// We're only validating that the CF endpoint is contactable here, as
 //	// testing the authentication is tricky
 //	_, err := cfclient.NewClient(&cfclient.Config{
-//		ApiAddress:   settings.APIAddress,
+//		ApiAddress:   settings.CfApiAddress,
 //		ClientID:     settings.ClientID,
 //		ClientSecret: settings.ClientSecret,
 //		HttpClient: &http.Client{

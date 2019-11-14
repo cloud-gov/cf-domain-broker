@@ -32,14 +32,14 @@ type RuntimeSettings struct {
 	Email                string            `envconfig:"email" required:"true"`
 	AcmeUrl              string            `envconfig:"acme_url" required:"true"`
 	Bucket               string            `envconfig:"bucket" required:"true"`
-	IamPathPrefix        string            `envconfig:"iam_path_prefix" default:"/domains-broker/"`
+	IamPathPrefix        string            `envconfig:"iam_path_prefix" default:"/domains-broker-v2/"`
 	CloudFrontPrefix     string            `envconfig:"cloudfront_prefix" default:""`
 	AwsAccessKeyId       string            `envconfig:"aws_access_key_id" required:"true"`
 	AwsSecretAccessKey   string            `envconfig:"aws_secret_access_key" required:"true"`
 	AwsDefaultRegion     string            `envconfig:"aws_default_region" required:"true"`
 	ALBNames             []string          `envconfig:"alb_names" required:"true"`
 	ServerSideEncryption string            `envconfig:"server_side_encryption"`
-	APIAddress           string            `envconfig:"api_address" required:"true"`
+	CfApiAddress         string            `envconfig:"cf_api_address" required:"true"`
 	Resolvers            map[string]string `envconfig:"resolvers" default:"cloudflare:1.1.1.1"`
 	ClientID             string            `envconfig:"client_id" required:"true"`
 	ClientSecret         string            `envconfig:"client_secret" required:"true"`
