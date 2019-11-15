@@ -30,25 +30,25 @@ resources:
     organization: ((cf-organization-development))
     space: ((cf-space-development))
 
-- name: broker-deploy-staging
-  type: cf
-  icon: cloud-upload-outline
-  source:
-    api: ((cf-api-url-staging))
-    username: ((cf-deploy-username-staging))
-    password: ((cf-deploy-password-staging))
-    organization: ((cf-organization-staging))
-    space: ((cf-space-staging))
-
-- name: broker-deploy-production
-  type: cf
-  icon: cloud-upload-outline
-  source:
-    api: ((cf-api-url-production))
-    username: ((cf-deploy-username-production))
-    password: ((cf-deploy-password-production))
-    organization: ((cf-organization-production))
-    space: ((cf-space-production))
+#- name: broker-deploy-staging
+#  type: cf
+#  icon: cloud-upload-outline
+#  source:
+#    api: ((cf-api-url-staging))
+#    username: ((cf-deploy-username-staging))
+#    password: ((cf-deploy-password-staging))
+#    organization: ((cf-organization-staging))
+#    space: ((cf-space-staging))
+#
+#- name: broker-deploy-production
+#  type: cf
+#  icon: cloud-upload-outline
+#  source:
+#    api: ((cf-api-url-production))
+#    username: ((cf-deploy-username-production))
+#    password: ((cf-deploy-password-production))
+#    organization: ((cf-organization-production))
+#    space: ((cf-space-production))
 
 - name: slack
   type: slack-notification
@@ -83,13 +83,13 @@ jobs:
     file: broker-src/ci/run-tests.yml
 - name: deploy-development
   plan:
-  - aggregate:
+  - in_parallel:
     - get: broker-src
       passed: [test-domain-broker]
       trigger: true
     - get: pipeline-tasks
   - in_parallel:
-    - put: broker-deploy-development
+    - put: broker-deploy-dev
       params:
         path: broker-src
         manifest: broker-src/manifest.yml
@@ -142,30 +142,19 @@ jobs:
   - get: broker-src
     passed: [deploy-development]
     trigger: true
-  - get: broker-release
-    trigger: true
-  - get: stemcell-xenial
-    trigger: true
   - in_parallel:
-    - task: acceptance-tests-http-01
+    - task: acceptance-tests-dns-01
       file: broker-src/ci/acceptance-tests.yml
-      params: &acceptance-tests-params-development
+      params:
         <<: *cf-creds-development
         SERVICE_NAME: custom-domain
         PLAN_NAME: custom-domain
         SERVICE_INSTANCE_NAME: domains-acceptance-test-%s
         AWS_ACCESS_KEY_ID: ((domains-broker-access-key-id-acceptance-development))
         AWS_SECRET_ACCESS_KEY: ((domains-broker-secret-access-key-acceptance-development))
-        CHALLENGE_TYPE: HTTP-01
-        HOSTED_ZONE_ID: ((hosted-zone-id-development))
-        DOMAIN: ((domain-url-development))
-        DOMAINS_TIMEOUT: ((domains-timeout))
+        DOMAIN: ((domain-broker-v2-url-development))
         CA_CERT: ((acceptance-test-ca-cert-development))
         DELETE_SERVICE: ((acceptance-test-delete-service-development))
-    - task: acceptance-tests-dns-01
-      file: broker-src/ci/acceptance-tests.yml
-      params:
-        <<: *acceptance-tests-params-development
         CHALLENGE_TYPE: DNS-01
 
 #- name: deploy-staging
