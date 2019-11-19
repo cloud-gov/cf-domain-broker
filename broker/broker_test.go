@@ -471,7 +471,7 @@ func (s *BrokerSuite) TestDomainBroker_Services() {
 
 	s.Nil(err, "expected ")
 	s.Equal(1, len(res), "expected one service")        // one service
-	s.Equal(2, len(res[0].Plans), "expected two plans") //two plans
+	s.Equal(1, len(res[0].Plans), "expected two plans") // one plan atm
 
 	// sleep a bit to let the workers finish spinning up before the test ends.
 	time.Sleep(time.Second * 2)

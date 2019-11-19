@@ -72,20 +72,20 @@ func (d *DomainBroker) Services(ctx context.Context) ([]domain.Service, error) {
 func (d *DomainBroker) servicePlans() []domain.ServicePlan {
 	plans := make([]domain.ServicePlan, 0)
 
-	plans = append(plans, domain.ServicePlan{
-		ID:          cfdomainbroker.CDNPlanId,
-		Name:        cfdomainbroker.CDNPlanName,
-		Description: "This plan provides a custom domain name with CDN services through AWS Cloudfront.",
-		Metadata: &domain.ServicePlanMetadata{
-			// todo (mxplusb): make sure these cover the points we care about.
-			Bullets: []string{
-				"Each deployment will create an AWS Cloudfront instance on your behalf",
-				"Creates and maintains a Let's Encrypt SSL certificate for your custom domain.",
-				"Check your ATO to ensure you can use AWS Cloudfront",
-			},
-			DisplayName: "Custom-Domain-With-CDN",
-		},
-	})
+	//plans = append(plans, domain.ServicePlan{
+	//	ID:          cfdomainbroker.CDNPlanId,
+	//	Name:        cfdomainbroker.CDNPlanName,
+	//	Description: "This plan provides a custom domain name with CDN services through AWS Cloudfront.",
+	//	Metadata: &domain.ServicePlanMetadata{
+	//		// todo (mxplusb): make sure these cover the points we care about.
+	//		Bullets: []string{
+	//			"Each deployment will create an AWS Cloudfront instance on your behalf",
+	//			"Creates and maintains a Let's Encrypt SSL certificate for your custom domain.",
+	//			"Check your ATO to ensure you can use AWS Cloudfront",
+	//		},
+	//		DisplayName: cfdomainbroker.CDNPlanName,
+	//	},
+	//})
 
 	plans = append(plans, domain.ServicePlan{
 		ID:          cfdomainbroker.DomainPlanId,
@@ -94,10 +94,10 @@ func (d *DomainBroker) servicePlans() []domain.ServicePlan {
 		Metadata: &domain.ServicePlanMetadata{
 			// todo (mxplusb): make sure these cover the points we care about.
 			Bullets: []string{
-				"Creates and maintains a Let's Encrypt SSL certificate for your custom domain.",
+				"Creates and maintains a Let's Encrypt TLS certificate for your custom domain.",
 				"Does not create a CDN service for you.",
 			},
-			DisplayName: "Custom-Domain",
+			DisplayName: cfdomainbroker.DomainPlanName,
 		},
 	})
 
