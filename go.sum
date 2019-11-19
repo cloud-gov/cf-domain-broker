@@ -28,6 +28,8 @@ github.com/18f/gravel v0.0.0-20191108175620-b2d26b1f60b2 h1:CVi6tfhpIagCk1VGxPBh
 github.com/18f/gravel v0.0.0-20191108175620-b2d26b1f60b2/go.mod h1:4R0i9yINHF9fXTbLBK5B+t7Qg1oxsm5d3YfbT/kVNA4=
 github.com/18f/gravel v0.0.0-20191108205842-be9f275d6d6f h1:ph768+HEB9Jrh79BZI1DjJ/Pbk76hKSEmUxeHgAeiLE=
 github.com/18f/gravel v0.0.0-20191108205842-be9f275d6d6f/go.mod h1:4R0i9yINHF9fXTbLBK5B+t7Qg1oxsm5d3YfbT/kVNA4=
+github.com/18f/gravel v0.0.0-20191119175617-eff5e3f82bc5 h1:uhWzUN8S0o1+T8awFtJxHpGffn5wep3qAwyhhtaBYRw=
+github.com/18f/gravel v0.0.0-20191119175617-eff5e3f82bc5/go.mod h1:4R0i9yINHF9fXTbLBK5B+t7Qg1oxsm5d3YfbT/kVNA4=
 github.com/Azure/azure-sdk-for-go v32.0.0+incompatible/go.mod h1:9XXNKU+eRnpl9moKnB4QOLf1HestfXbmab5FXxiDBjc=
 github.com/Azure/azure-sdk-for-go v32.4.0+incompatible/go.mod h1:9XXNKU+eRnpl9moKnB4QOLf1HestfXbmab5FXxiDBjc=
 github.com/Azure/go-autorest/autorest v0.1.0/go.mod h1:AKyIcETwSUFxIcs/Wnq/C+kwCtlEYGUVd7FPNb2slmg=
@@ -117,6 +119,8 @@ github.com/go-acme/lego/v3 v3.0.0 h1:vowaDZ8Z792A3EciTcR5dRGY49xlybfQPJRG7T6dEo0
 github.com/go-acme/lego/v3 v3.0.0/go.mod h1:zlnqyJK/ycdTPn8SMdgQnRf0sEenTpY7E/ijccUzIxk=
 github.com/go-acme/lego/v3 v3.1.0 h1:yanYFoYW8azFkCvJfIk7edWWfjkYkhDxe45ZsxoW4Xk=
 github.com/go-acme/lego/v3 v3.1.0/go.mod h1:074uqt+JS6plx+c9Xaiz6+L+GBb+7itGtzfcDM2AhEE=
+github.com/go-acme/lego/v3 v3.2.0 h1:z0zvNlL1niv/1qA06V5X1BRC5PeLoGKAlVaWthXQz9c=
+github.com/go-acme/lego/v3 v3.2.0/go.mod h1:074uqt+JS6plx+c9Xaiz6+L+GBb+7itGtzfcDM2AhEE=
 github.com/go-cmd/cmd v1.0.5/go.mod h1:y8q8qlK5wQibcw63djSl/ntiHUHXHGdCkPk0j4QeW4s=
 github.com/go-errors/errors v1.0.1/go.mod h1:f4zRHt4oKfwPJE5k8C9vpYG+aDHdBFUsgrm6/TyX73Q=
 github.com/go-ini/ini v1.44.0/go.mod h1:ByCAeIL28uOIIG0E3PJtZPDL8WnHpFKFOtgjp+3Ies8=
@@ -370,6 +374,8 @@ golang.org/x/crypto v0.0.0-20191106202628-ed6320f186d4 h1:PDpCLFAH/YIX0QpHPf2eO7
 golang.org/x/crypto v0.0.0-20191106202628-ed6320f186d4/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
 golang.org/x/crypto v0.0.0-20191107222254-f4817d981bb6 h1:VsmCukA2gDdC3Mu6evOIT0QjLSQWiJIwzv1Bdj4jdzU=
 golang.org/x/crypto v0.0.0-20191107222254-f4817d981bb6/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
+golang.org/x/crypto v0.0.0-20191117063200-497ca9f6d64f h1:kz4KIr+xcPUsI3VMoqWfPMvtnJ6MGfiVwsWSVzphMO4=
+golang.org/x/crypto v0.0.0-20191117063200-497ca9f6d64f/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
 golang.org/x/exp v0.0.0-20190121172915-509febef88a4/go.mod h1:CJ0aWSM057203Lf6IL+f9T1iT9GByDxfZKAQTCR3kQA=
 golang.org/x/lint v0.0.0-20181026193005-c67002cb31c3/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=
 golang.org/x/lint v0.0.0-20190227174305-5b3e6a55c961/go.mod h1:wehouNa3lNwaWXcvxsM5YxQ5yQlVC4a0KAMCusXpPoU=
@@ -407,6 +413,8 @@ golang.org/x/net v0.0.0-20191108063844-7e6e90b9ea88 h1:Duq71GDCs3Cs8n6cRINv6SutZ
 golang.org/x/net v0.0.0-20191108063844-7e6e90b9ea88/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=
 golang.org/x/net v0.0.0-20191108174545-380dde419d29 h1:K1loz76fyOYZfdgWfckjyEXQnbrZOZp0Y4bNyk+WnRE=
 golang.org/x/net v0.0.0-20191108174545-380dde419d29/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=
+golang.org/x/net v0.0.0-20191119073136-fc4aabc6c914 h1:MlY3mEfbnWGmUi4rtHOtNnnnN4UJRGSyLPx+DXA5Sq4=
+golang.org/x/net v0.0.0-20191119073136-fc4aabc6c914/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=
 golang.org/x/oauth2 v0.0.0-20180821212333-d2e6202438be/go.mod h1:N/0e6XlmueqKjAGxoOufVs8QHGRruUQn6yWY3a++T0U=
 golang.org/x/oauth2 v0.0.0-20190130055435-99b60b757ec1/go.mod h1:gOpvHmFTYa4IltrdGE7lF6nIHvwfUNPOp7c8zoXwtLw=
 golang.org/x/oauth2 v0.0.0-20190226205417-e64efc72b421 h1:Wo7BWFiOk0QRFMLYMqJGFMd9CgUAcGx7V+qEg/h5IBI=
@@ -443,6 +451,8 @@ golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c h1:S/FtSvpNLtFBgjTqcKsRpsa6a
 golang.org/x/sys v0.0.0-20191029155521-f43be2a4598c/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20191105231009-c1f44814a5cd h1:3x5uuvBgE6oaXJjCOvpCC1IpgJogqQ+PqGGU3ZxAgII=
 golang.org/x/sys v0.0.0-20191105231009-c1f44814a5cd/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/sys v0.0.0-20191119060738-e882bf8e40c2 h1:wAW1U21MfVN0sUipAD8952TBjGXMRHFKQugDlQ9RwwE=
+golang.org/x/sys v0.0.0-20191119060738-e882bf8e40c2/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
 golang.org/x/text v0.3.1-0.20180807135948-17ff2d5776d2/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
 golang.org/x/text v0.3.2 h1:tW2bmiBqwgJj/UpqtC8EpXEZVYOwU0yG4iWbprSVAcs=
