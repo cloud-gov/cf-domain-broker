@@ -3,7 +3,7 @@ package cf_domain_broker
 import "time"
 
 const (
-	DomainServiceName = "Custom-Domain-Broker"
+	DomainServiceName = "custom-domain-broker"
 	DomainServiceId   = "7428b169-f693-46c8-86bc-6dc8a8ea1361"
 
 	// todo (mxplusb): update this.

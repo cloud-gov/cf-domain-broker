@@ -75,17 +75,17 @@ cf-creds-production: &cf-creds-production
   CF_SPACE: ((cf-space-production))
 
 jobs:
-- name: test-domain-broker
-  plan:
-  - get: broker-src
-    trigger: true
-  - task: run-tests
-    file: broker-src/ci/run-tests.yml
+#- name: test-domain-broker
+#  plan:
+#  - get: broker-src
+#    trigger: true
+#  - task: run-tests
+#    file: broker-src/ci/run-tests.yml
 - name: deploy-development
   plan:
   - in_parallel:
     - get: broker-src
-      passed: [test-domain-broker]
+#      passed: [test-domain-broker]
       trigger: true
     - get: pipeline-tasks
   - in_parallel:
@@ -98,7 +98,7 @@ jobs:
           ALB_NAMES: ((domain-broker-v2-alb-names))
           CF_API_ADDRESS: ((cf-api-url-development))
           AWS_ACCESS_KEY_ID: ((domain-broker-v2-access-key-id-development))
-          AWS_SECRET_ACCESS_KEY: ((domain-broker-v2-secret-access-key-development))
+          AWS_SECRET_ACCESS_KEY: ((domain-broker-v2-secret-access-key-id-development))
           AWS_DEFAULT_REGION: ((domain-broker-v2-region-development))
           BROKER_USERNAME: ((domain-broker-v2-user-development))
           BROKER_PASSWORD: ((domain-broker-v2-pass-development))
