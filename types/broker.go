@@ -34,7 +34,6 @@ type RuntimeSettings struct {
 	BrokerUsername       string            `envconfig:"broker_username" required:"true"`
 	Bucket               string            `envconfig:"bucket" required:"true"`
 	CfApiAddress         string            `envconfig:"cf_api_address" required:"true"`
-	CloudFrontPrefix     string            `envconfig:"cloudfront_prefix" default:""`
 	DatabaseUrl          string            `envconfig:"database_url" required:"true"`
 	Email                string            `envconfig:"email" required:"true"`
 	IamPathPrefix        string            `envconfig:"iam_path_prefix" default:"/domains-broker-v2/"`

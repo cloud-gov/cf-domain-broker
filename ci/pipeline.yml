@@ -117,6 +117,7 @@ jobs:
       AUTH_USER: ((domain-broker-v2-user-development))
       AUTH_PASS: ((domain-broker-v2-pass-development))
       SERVICES: domain-broker-v2
+      BROKER_URL: ((domain-broker-v2-url-development))
   on_failure:
     put: slack
     params:
