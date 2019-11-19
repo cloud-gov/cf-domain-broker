@@ -25,28 +25,25 @@ type DomainString struct {
 
 // todo (mxplusb): finish plumbing all of this.
 type RuntimeSettings struct {
-	Port                 string            `envconfig:"port" default:"3000"`
-	BrokerUsername       string            `envconfig:"broker_username" required:"true"`
+	ALBNames             []string          `envconfig:"alb_names" required:"true"`
+	AcmeUrl              string            `envconfig:"acme_url" required:"true"`
+	AwsAccessKeyId       string            `envconfig:"aws_access_key_id" required:"true"`
+	AwsDefaultRegion     string            `envconfig:"aws_default_region" required:"true"`
+	AwsSecretAccessKey   string            `envconfig:"aws_secret_access_key" required:"true"`
 	BrokerPassword       string            `envconfig:"broker_password" required:"true"`
+	BrokerUsername       string            `envconfig:"broker_username" required:"true"`
+	Bucket               string            `envconfig:"bucket" required:"true"`
+	CfApiAddress         string            `envconfig:"cf_api_address" required:"true"`
+	CloudFrontPrefix     string            `envconfig:"cloudfront_prefix" default:""`
 	DatabaseUrl          string            `envconfig:"database_url" required:"true"`
 	Email                string            `envconfig:"email" required:"true"`
-	AcmeUrl              string            `envconfig:"acme_url" required:"true"`
-	Bucket               string            `envconfig:"bucket" required:"true"`
 	IamPathPrefix        string            `envconfig:"iam_path_prefix" default:"/domains-broker-v2/"`
-	CloudFrontPrefix     string            `envconfig:"cloudfront_prefix" default:""`
-	AwsAccessKeyId       string            `envconfig:"aws_access_key_id" required:"true"`
-	AwsSecretAccessKey   string            `envconfig:"aws_secret_access_key" required:"true"`
-	AwsDefaultRegion     string            `envconfig:"aws_default_region" required:"true"`
-	ALBNames             []string          `envconfig:"alb_names" required:"true"`
-	ServerSideEncryption string            `envconfig:"server_side_encryption"`
-	CfApiAddress         string            `envconfig:"cf_api_address" required:"true"`
-	Resolvers            map[string]string `envconfig:"resolvers" default:"cloudflare:1.1.1.1"`
-	ClientID             string            `envconfig:"client_id" required:"true"`
-	ClientSecret         string            `envconfig:"client_secret" required:"true"`
-	DefaultOrigin        string            `envconfig:"default_origin" required:"true"`
-	Schedule             string            `envconfig:"schedule" default:"0 0 * * * *"`
 	MaxRoutes            int               `envconfig:"max_routes" default:"24"`
+	Port                 string            `envconfig:"port" default:"3000"`
 	RenewDays            int               `envconfig:"renew_days" default:"30"`
+	Resolvers            map[string]string `envconfig:"resolvers" default:"cloudflare:1.1.1.1"`
+	Schedule             string            `envconfig:"schedule" default:"0 0 * * * *"`
+	ServerSideEncryption string            `envconfig:"server_side_encryption"`
 
 	/*
 		Sets the logging level of the program. The higher the number, the less this will log.
