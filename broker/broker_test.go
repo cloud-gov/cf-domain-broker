@@ -107,10 +107,18 @@ func (s *BrokerSuite) SetupTest() {
 	}
 
 	// set up our test writers.
-	testSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
-	logger := lager.NewLogger("domain-broker-test")
-	logger.RegisterSink(testSink)
-	loggerSession := logger.Session("test-suite")
+	// set up our logging writers.
+	debugSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
+	normalSink := lager.NewPrettySink(os.Stdout, lager.INFO)
+	errorSink := lager.NewPrettySink(os.Stderr, lager.ERROR)
+	fatalSink := lager.NewPrettySink(os.Stderr, lager.FATAL)
+
+	logger := lager.NewLogger("test")
+	logger.RegisterSink(debugSink)
+	logger.RegisterSink(normalSink)
+	logger.RegisterSink(errorSink)
+	logger.RegisterSink(fatalSink)
+	loggerSession := logger.Session("suite")
 
 	s.WorkerManagerSettings = &routes.WorkerManagerSettings{
 		AutostartWorkerPool:         true,

@@ -9,7 +9,7 @@ require (
 	github.com/18F/cf-domain-broker-alb v0.0.0-20190801182336-1085344d9032
 	github.com/18f/gravel v0.0.0-20191119175617-eff5e3f82bc5
 	github.com/Masterminds/semver v1.5.0 // indirect
-	github.com/aws/aws-sdk-go v1.25.30
+	github.com/aws/aws-sdk-go v1.25.37
 	github.com/cloudfoundry-community/go-cfclient v0.0.0-20190808214049-35bcce23fc5f
 	github.com/drewolson/testflight v1.0.0 // indirect
 	github.com/go-acme/lego v2.7.2+incompatible // indirect
