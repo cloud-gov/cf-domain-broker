@@ -152,7 +152,7 @@ jobs:
         HOSTED_ZONE_ID: ((aws.hosted-zone-id))
         BROKER_NAME: ((domain-broker-v2.development.broker-name))
         SERVICE_NAME: custom-domain
-        PLAN_NAME: custom-domain
+        PLAN_NAME: ((domain-broker-v2.development.acceptance-tests.plan-name))
         SERVICE_INSTANCE_NAME: ((domain-broker-v2.development.test-service-instance-name))
         AWS_ACCESS_KEY_ID: ((domain-broker-v2.development.commercial-access-key-id))
         AWS_SECRET_ACCESS_KEY: ((domain-broker-v2.development.commercial-secret-access-key))
