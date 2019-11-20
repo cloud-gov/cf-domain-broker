@@ -6,15 +6,14 @@ set -eux
 TTL="${TTL:-60}"
 DOMAINS_TIMEOUT="${DOMAINS_TIMEOUT:-7200}"
 
-suffix="${RANDOM}"
+suffix="$(cat /proc/sys/kernel/random/uuid | cut -c1-4)"
 DOMAIN=$(printf "${DOMAIN}" "${suffix}")
 SERVICE_INSTANCE_NAME=$(printf "${SERVICE_INSTANCE_NAME}" "${suffix}")
 
-
-# allow setting a CA_CERT for testing against Let's Encrypt's staging environment
+# allow setting a CA_CERT_URL for testing against Let's Encrypt's staging environment
 curl_args=""
-if [ -n "${CA_CERT:-}" ]; then
-  echo "${CA_CERT}" > ca.pem
+if [ -n "${CA_CERT_URL:-}" ]; then
+  curl -o ca.pem "${CA_CERT_URL}"
   curl_args="--cacert ca.pem"
 fi
 
@@ -40,7 +39,7 @@ cf create-service "${SERVICE_NAME}" "${PLAN_NAME}" "${SERVICE_INSTANCE_NAME}" -c
 service_guid=$(cf service "${SERVICE_INSTANCE_NAME}" --guid)
 
 http_regex="CNAME or ALIAS domain\(s\) (.*) to (.*) or"
-dns_regex="name: (.*), value: (.*), ttl: (.*)"
+dns_regex="TXT Record: (.*), Value: (.*), Valid Until: (.*)"
 
 elapsed=300
 until [ "${elapsed}" -le 0 ]; do

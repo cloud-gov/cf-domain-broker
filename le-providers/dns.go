@@ -56,14 +56,15 @@ type DomainMessenger struct {
 }
 
 // String wraps a tabwriter into a string format for ease of use.
+// todo (mxplusb): figure out how to tell customers to set a short TTL on the TXT record.
 func (d DomainMessenger) String() string {
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, '\t', 0)
-	if _, err := fmt.Fprintf(w, "Domain\tToken\tKey Authentication\tValid Until\n"); err != nil {
+	if _, err := fmt.Fprintf(w, "TXT Record:\tValue:\tValid Until:\n"); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}
-	if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d.Domain, d.Token, d.KeyAuth, d.ValidUntil.Format(time.RFC850)); err != nil {
+	if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", d.Domain, d.KeyAuth, d.ValidUntil.Format(time.RFC850)); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}

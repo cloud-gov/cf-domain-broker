@@ -148,13 +148,16 @@ jobs:
       file: broker-src/ci/acceptance-tests.yml
       params:
         <<: *cf-creds-development
+        DOMAINS_TIMEOUT: 7200
+        HOSTED_ZONE_ID: ((aws.hosted-zone-id))
+        TTL:
         SERVICE_NAME: custom-domain
         PLAN_NAME: custom-domain
-        SERVICE_INSTANCE_NAME: domains-acceptance-test-%s
-        AWS_ACCESS_KEY_ID: ((domains-broker-access-key-id-acceptance-development))
-        AWS_SECRET_ACCESS_KEY: ((domains-broker-secret-access-key-acceptance-development))
-        DOMAIN: ((domain-broker-v2-url-development))
-        CA_CERT: ((acceptance-test-ca-cert-development))
+        SERVICE_INSTANCE_NAME: ((domain-broker-v2-test-service-instance-name))
+        AWS_ACCESS_KEY_ID: ((domain-broker-v2-commercial-access-key-id-development))
+        AWS_SECRET_ACCESS_KEY: ((domain-broker-v2-commercial-secret-access-key-development))
+        DOMAIN: ((domain-broker-v2-test-url-development))
+        CA_CERT_URL: ((domain-broker-v2-acme-root-development))
         DELETE_SERVICE: ((acceptance-test-delete-service-development))
         CHALLENGE_TYPE: DNS-01
 

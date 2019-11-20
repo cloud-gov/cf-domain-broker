@@ -9,7 +9,7 @@ const (
 	// todo (mxplusb): update this.
 	DomainServiceDescription                 = "Create a custom TLS certificate for your application."
 	DomainServiceMetadataDisplayName         = "Custom TLS Certificate"
-	DomainServiceMetadataLongDescription     = "long"
+	DomainServiceMetadataLongDescription     = "Create a custom TLS certificate for your application. This will provision a TLS certificate from Let's Encrypt, a free certificate provider."
 	DomainServiceMetadataDocumentationUrl    = "https://github.com/18f/cf-domain-broker/tree/master/README.md"
 	DomainServiceMetadataSupportUrl          = "https://cloud.gov/support"
 	DomainServiceMetadataImageUrl            = "some-image"
