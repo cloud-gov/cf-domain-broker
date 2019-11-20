@@ -150,15 +150,14 @@ jobs:
         <<: *cf-creds-development
         DOMAINS_TIMEOUT: 7200
         HOSTED_ZONE_ID: ((aws.hosted-zone-id))
-        TTL:
         SERVICE_NAME: custom-domain
         PLAN_NAME: custom-domain
-        SERVICE_INSTANCE_NAME: ((domain-broker-v2-test-service-instance-name))
-        AWS_ACCESS_KEY_ID: ((domain-broker-v2-commercial-access-key-id-development))
-        AWS_SECRET_ACCESS_KEY: ((domain-broker-v2-commercial-secret-access-key-development))
-        DOMAIN: ((domain-broker-v2-test-url-development))
-        CA_CERT_URL: ((domain-broker-v2-acme-root-development))
-        DELETE_SERVICE: ((acceptance-test-delete-service-development))
+        SERVICE_INSTANCE_NAME: ((domain-broker-v2.development.test-service-instance-name))
+        AWS_ACCESS_KEY_ID: ((domain-broker-v2.development.commercial-access-key-id))
+        AWS_SECRET_ACCESS_KEY: ((domain-broker-v2.development.commercial-secret-access-key))
+        DOMAIN: ((domain-broker-v2.development.test-url))
+        CA_CERT_URL: ((domain-broker-v2.development.acme-root))
+        DELETE_SERVICE: ((domain-broker-v2.development.delete-test-service-instance))
         CHALLENGE_TYPE: DNS-01
 
 #- name: deploy-staging
