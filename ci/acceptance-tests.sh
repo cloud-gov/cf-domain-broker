@@ -35,7 +35,7 @@ sleep 5
 
 # Create service
 opts=$(jq -n --arg domains "${DOMAIN}" '{domains: [$domains]}')
-cf create-service "${SERVICE_NAME}" "${PLAN_NAME}" "${SERVICE_INSTANCE_NAME}" -c "${opts}"
+cf create-service -b "${BROKER_NAME}" "${SERVICE_NAME}" "${PLAN_NAME}" "${SERVICE_INSTANCE_NAME}" -c "${opts}"
 service_guid=$(cf service "${SERVICE_INSTANCE_NAME}" --guid)
 
 http_regex="CNAME or ALIAS domain\(s\) (.*) to (.*) or"
