@@ -113,11 +113,11 @@ jobs:
     file: pipeline-tasks/register-service-broker.yml
     params:
       <<: *cf-creds-development
-      BROKER_NAME: ((domain-broker-v2-broker-name-development))
-      AUTH_USER: ((domain-broker-v2-user-development))
-      AUTH_PASS: ((domain-broker-v2-pass-development))
-      SERVICES: ((domain-broker-v2-service-offerings))
-      BROKER_URL: ((domain-broker-v2-url-development))
+      BROKER_NAME: ((domain-broker-v2.development.broker-name))
+      AUTH_USER: ((domain-broker-v2.development.user))
+      AUTH_PASS: ((domain-broker-v2.development.pass))
+      SERVICES: ((domain-broker-v2.development.service-offerings))
+      BROKER_URL: ((domain-broker-v2.development.url))
   on_failure:
     put: slack
     params:
