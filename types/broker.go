@@ -40,7 +40,7 @@ type RuntimeSettings struct {
 	MaxRoutes            int               `envconfig:"max_routes" default:"24"`
 	Port                 string            `envconfig:"port" default:"3000"`
 	RenewDays            int               `envconfig:"renew_days" default:"30"`
-	Resolvers            map[string]string `envconfig:"resolvers" default:"cloudflare:1.1.1.1"`
+	Resolvers            Resolver `envconfig:"resolvers" default:"cloudflare:1.1.1.1"`
 	Schedule             string            `envconfig:"schedule" default:"0 0 * * * *"`
 	ServerSideEncryption string            `envconfig:"server_side_encryption"`
 

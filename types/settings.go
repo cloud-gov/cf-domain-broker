@@ -2,6 +2,7 @@ package types
 
 import (
 	"net/http"
+	"strings"
 
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/service/cloudfront/cloudfrontiface"
@@ -38,5 +39,17 @@ type GlobalSettings struct {
 	AcmeHttpClient *http.Client
 
 	// DNS Resolvers
-	Resolvers map[string]string
+	Resolvers Resolver
+}
+
+type Resolver map[string]string
+
+func (r *Resolver) Decode(value string) error {
+	*r = make(map[string]string)
+	s := strings.Split(value, ",")
+	for idx := range s {
+		ns := strings.Split(s[idx], "=")
+		(*r)[ns[0]] = ns[1]
+	}
+	return nil
 }
