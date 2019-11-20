@@ -94,20 +94,20 @@ jobs:
         path: broker-src
         manifest: broker-src/manifest.yml
         environment_variables:
-          ACME_URL: ((domain-broker-v2-acme-url-development))
-          ALB_NAMES: ((domain-broker-v2-alb-names))
+          ACME_URL: ((domain-broker-v2.development.acme-url))
+          ALB_NAMES: ((domain-broker-v2.development.alb-names))
           CF_API_ADDRESS: ((cf-api-url-development))
-          AWS_ACCESS_KEY_ID: ((domain-broker-v2-access-key-id-development))
-          AWS_SECRET_ACCESS_KEY: ((domain-broker-v2-secret-access-key-id-development))
-          AWS_DEFAULT_REGION: ((domain-broker-v2-region-development))
-          BROKER_USERNAME: ((domain-broker-v2-user-development))
-          BROKER_PASSWORD: ((domain-broker-v2-pass-development))
-          BUCKET: ((domain-broker-v2-bucket-development))
-          DATABASE_URL: ((domain-broker-v2-database-url-development))
-          EMAIL: ((domain-broker-v2-email-development))
-          IAM_PATH_PREFIX: ((domain-broker-v2-iam-path-prefix-development))
-          LOG_LEVEL: ((domain-broker-v2-log-level))
-          RESOLVERS: ((domain-broker-v2-resolvers))
+          AWS_ACCESS_KEY_ID: ((domain-broker-v2.development.access-key-id))
+          AWS_SECRET_ACCESS_KEY: ((domain-broker-v2.development.secret-access-key-id))
+          AWS_DEFAULT_REGION: ((domain-broker-v2.development.region))
+          BROKER_USERNAME: ((domain-broker-v2.development.user))
+          BROKER_PASSWORD: ((domain-broker-v2.development.pass))
+          BUCKET: ((domain-broker-v2.development.bucket))
+          DATABASE_URL: ((domain-broker-v2.development.database-url))
+          EMAIL: ((domain-broker-v2.development.email))
+          IAM_PATH_PREFIX: ((domain-broker-v2.development.iam-path-prefix))
+          LOG_LEVEL: ((domain-broker-v2.development.log-level))
+          RESOLVERS: ((domain-broker-v2.development.resolvers))
           SERVER_SIDE_ENCRYPTION: AES256
   - task: update-broker
     file: pipeline-tasks/register-service-broker.yml
