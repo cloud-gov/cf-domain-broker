@@ -23,6 +23,7 @@ func (s *DnsMessengerSuite) SetupTest() {
 		Domain:     "test.domain",
 		Token:      "1234qwer",
 		KeyAuth:    "5678tyui",
+		Message:    msg,
 		InstanceId: uuid.New(),
 		ValidUntil: time.Time{},
 	}

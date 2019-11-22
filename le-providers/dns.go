@@ -48,15 +48,15 @@ func (s ServiceBrokerDNSProvider) Timeout() (timeout, interval time.Duration) {
 
 // Wrapper for storing the DNS instructions.
 type DomainMessenger struct {
-	gorm.Model
-	Domain     string
-	Token      string
-	KeyAuth    string
-	Message    string
-	InstanceId string
+	gorm.Model `json:"-"`
+	Domain     string `json:"domain"`
+	Token      string `json:"-"`
+	KeyAuth    string `json:"key_auth"`
+	Message    string `json:"message"`
+	InstanceId string `json:"-"`
 
 	// How long is left until the domain service needs to be authenticated.
-	ValidUntil time.Time
+	ValidUntil time.Time `json:"valid_until"`
 }
 
 // String wraps a tabwriter into a string format for ease of use.

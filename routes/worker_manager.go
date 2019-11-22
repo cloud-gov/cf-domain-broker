@@ -774,6 +774,14 @@ func (w *WorkerManager) lastOperation(msg LastOperationRequest, resp chan<- Last
 		}
 		innerLocalResp := <-innerLocalRespc
 
+		// just format the output beforehand so it looks nice.
+		if innerLocalResp.Error == nil && len(innerLocalResp.Messenger) > 0 {
+			for idx := range innerLocalResp.Messenger {
+				old := innerLocalResp.Messenger[idx].Domain
+				innerLocalResp.Messenger[idx].Domain = fmt.Sprintf("_acme-challenge.%s", old)
+			}
+		}
+
 		val, err := json.Marshal(innerLocalResp.Messenger)
 		if err != nil {
 			innerLocalResp.Error = err
