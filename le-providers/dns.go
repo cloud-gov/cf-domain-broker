@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"text/tabwriter"
 	"time"
 
 	"code.cloudfoundry.org/lager"
@@ -58,21 +57,27 @@ type DomainMessenger struct {
 // String wraps a tabwriter into a string format for ease of use.
 // todo (mxplusb): figure out how to tell customers to set a short TTL on the TXT record.
 func (d DomainMessenger) String() string {
-	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 4, 2, '\t', 0)
-	if _, err := fmt.Fprintf(w, "TXT Record:\tValue:\tValid Until:\n"); err != nil {
+	var buf []byte
+	w := bytes.NewBuffer(buf)
+
+	updatedRecord := fmt.Sprintf("_acme-challenge.%s", d.Domain)
+
+	if _, err := fmt.Fprintf(w, "Please add the following text record to your DNS server. If you don't have the TXT record updated to the below value before the validity expires, you will need to create a new instance of this service.\nTXT Record:\t%s\n", updatedRecord); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}
-	if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", d.Domain, d.KeyAuth, d.ValidUntil.Format(time.RFC850)); err != nil {
+
+	if _, err := fmt.Fprintf(w, "TXT Record Value:\t%s\n", d.KeyAuth); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}
-	if err := w.Flush(); err != nil {
+
+	if _, err := fmt.Fprintf(w, "Valid Until:\t%s\n", d.ValidUntil.Format(time.RFC850)); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}
-	return buf.String()
+
+	return string(buf)
 }
 
 // Present our credentials to the handler.
