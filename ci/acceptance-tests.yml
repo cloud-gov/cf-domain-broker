@@ -7,7 +7,7 @@ image_resource:
     repository: 18fgsa/concourse-task
 
 inputs:
-- name: broker-src
+  - name: broker-src
 
 run:
   path: broker-src/ci/acceptance-tests.sh

@@ -76,11 +76,11 @@ func (r *RouteManager) Create(ctx context.Context,
 
 	// build the request
 	req := ProvisionRequest{
-		Context:      ctx,
-		InstanceId:   instanceId,
-		DomainOpts:   domainOpts,
-		CdnOpts:      cdnOpts,
-		Tags:         tags,
+		Context:    ctx,
+		InstanceId: instanceId,
+		DomainOpts: domainOpts,
+		CdnOpts:    cdnOpts,
+		Tags:       tags,
 	}
 
 	// send the request
@@ -313,34 +313,34 @@ func (r *RouteManagerSettings) updateDeprovisioning(route *models.DomainRoute) e
 //}
 
 //func (r *RouteManager) DeleteOrphanedCerts() {
-	//Finish wehn adding CDN
-	/*activeCerts := make(map[string]string)
+//Finish wehn adding CDN
+/*activeCerts := make(map[string]string)
 
-	r.CloudFrontSvc.ListDistributions(func(distro cloudfront.DistributionSummary) bool {
-		if distro.ViewerCertificate.IAMCertificateId != nil {
-			activeCerts[*distro.ViewerCertificate.IAMCertificateId] = *distro.ARN
-		}
-		return true
-	})
+r.CloudFrontSvc.ListDistributions(func(distro cloudfront.DistributionSummary) bool {
+	if distro.ViewerCertificate.IAMCertificateId != nil {
+		activeCerts[*distro.ViewerCertificate.IAMCertificateId] = *distro.ARN
+	}
+	return true
+})
 
-	/*interfaces.IamCertificateManager.ListCertificates(func(cert iam.ServerCertificateMetadata) bool {
+/*interfaces.IamCertificateManager.ListCertificates(func(cert iam.ServerCertificateMetadata) bool {
 
-		_, active := activeCerts[*cert.ServerCertificateId]
-		if !active && time.Since(*cert.UploadDate).Hours() > 24 {
-			r.Logger.Info("cleaning-orphaned-certs", lager.Data{
+	_, active := activeCerts[*cert.ServerCertificateId]
+	if !active && time.Since(*cert.UploadDate).Hours() > 24 {
+		r.Logger.Info("cleaning-orphaned-certs", lager.Data{
+			"cert": cert,
+		})
+
+		if err := interfaces.IamCertificateManager.DeleteCertificate(cert.ServerCertificateName); err != nil {
+			r.Logger.Error("iam-delete-cert", err, lager.Data{
 				"cert": cert,
 			})
-
-			if err := interfaces.IamCertificateManager.DeleteCertificate(cert.ServerCertificateName); err != nil {
-				r.Logger.Error("iam-delete-cert", err, lager.Data{
-					"cert": cert,
-				})
-			}
-
 		}
-		return true
-	})*/
-	//panic("finish me :)")
+
+	}
+	return true
+})*/
+//panic("finish me :)")
 //}
 
 // UpdateElbs is a cron job designed to keep the internal ELB references up-to-date so we don't need to store the info

@@ -6,6 +6,6 @@ import (
 
 type Certificate struct {
 	*certificate.Resource `gorm:"not_null"`
-	InstanceId string `gorm:primary_key`
-	ARN      string
+	InstanceId            string `gorm:primary_key`
+	ARN                   string
 }

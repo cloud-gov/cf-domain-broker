@@ -1,9 +1,9 @@
 ---
 applications:
-- name: cf-domain-broker
-  command: cmd
-  buildpack: go_buildpack
-  memory: 128M
-  env:
-    GO_INSTALL_PACKAGE_SPEC: "./cmd"
-    GOVERSION: go1.13
+  - name: cf-domain-broker
+    command: cmd
+    buildpack: go_buildpack
+    memory: 128M
+    env:
+      GO_INSTALL_PACKAGE_SPEC: "./cmd"
+      GOVERSION: go1.13

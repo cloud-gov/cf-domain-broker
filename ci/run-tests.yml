@@ -8,8 +8,8 @@ image_resource:
     tag: "1.13"
 
 inputs:
-- name: broker-src
-  path: cf-domain-broker
+  - name: broker-src
+    path: cf-domain-broker
 
 run:
   path: cf-domain-broker/ci/run-tests.sh

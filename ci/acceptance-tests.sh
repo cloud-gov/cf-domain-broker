@@ -21,7 +21,10 @@ path="$(dirname $0)"
 
 # Authenticate
 cf api "${CF_API_URL}"
-(set +x; cf auth "${CF_USERNAME}" "${CF_PASSWORD}")
+(
+  set +x
+  cf auth "${CF_USERNAME}" "${CF_PASSWORD}"
+)
 
 # Target
 cf target -o "${CF_ORGANIZATION}" -s "${CF_SPACE}"
@@ -30,7 +33,7 @@ cf target -o "${CF_ORGANIZATION}" -s "${CF_SPACE}"
 cf create-domain "${CF_ORGANIZATION}" "${DOMAIN}"
 
 # the create service below intermittently runs too quickly
-# and fails because it can't yet find the domian. 
+# and fails because it can't yet find the domian.
 sleep 5
 
 # Create service
@@ -66,7 +69,7 @@ if [ -z "${domain_internal:-}" ] || [ -z "${txt_name:-}" ]; then
 fi
 
 # Create DNS record(s)
-cat << EOF > ./create-cname.json
+cat <<EOF >./create-cname.json
 {
   "Changes": [
     {
@@ -85,7 +88,7 @@ cat << EOF > ./create-cname.json
 EOF
 
 if [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
-  cat << EOF > ./create-txt.json
+  cat <<EOF >./create-txt.json
 {
   "Changes": [
     {
@@ -142,7 +145,7 @@ if [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
 fi
 
 # Push test app
-cat << EOF > "${path}/app/manifest.yml"
+cat <<EOF >"${path}/app/manifest.yml"
 ---
 applications:
 - name: domain-broker-test-${CHALLENGE_TYPE}
@@ -172,7 +175,7 @@ if [ "${DELETE_SERVICE:-"true"}" == "true" ]; then
   cf delete-domain -f "${DOMAIN}"
 
   # Delete DNS record(s)
-  cat << EOF > ./delete-cname.json
+  cat <<EOF >./delete-cname.json
 {
   "Changes": [
     {
@@ -190,7 +193,7 @@ if [ "${DELETE_SERVICE:-"true"}" == "true" ]; then
 }
 EOF
   if [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
-    cat << EOF > ./delete-txt.json
+    cat <<EOF >./delete-txt.json
 {
   "Changes": [
     {
@@ -208,9 +211,9 @@ EOF
 }
 EOF
 
-  aws route53 change-resource-record-sets \
-    --hosted-zone-id "${HOSTED_ZONE_ID}" \
-    --change-batch file://./delete-cname.json
+    aws route53 change-resource-record-sets \
+      --hosted-zone-id "${HOSTED_ZONE_ID}" \
+      --change-batch file://./delete-cname.json
   elif [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
     aws route53 change-resource-record-sets \
       --hosted-zone-id "${HOSTED_ZONE_ID}" \

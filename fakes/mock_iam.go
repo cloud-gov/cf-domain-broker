@@ -11,7 +11,7 @@ import (
 )
 
 type MockIAMAPI struct {
-	VpcId string
+	VpcId                string
 	uploadedCertificates []*iam.UploadServerCertificateOutput
 }
 
