@@ -1,7 +1,6 @@
 package le_providers
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -13,7 +12,7 @@ import (
 )
 
 const (
-	msg = `Please add the text record to your DNS server. If the TXT record isn't set to the below value before the validity expires, you will need to create a new instance of this service.`
+	msg = `In order to properly use this, you need to first ensure the desired domain name you want is created with the value of the 'cname' field so the domain is resolvable. Then, create the TXT record using the attached values. You can set whatever TTL value you want on the TXT record, but our recommendation is better. Once you've doneIf the TXT record isn't set to the below value before the validity expires, you will need to create a new instance of this service.`
 )
 
 type ServiceBrokerDnsProviderSettings struct {
@@ -21,6 +20,8 @@ type ServiceBrokerDnsProviderSettings struct {
 	Logger     lager.Logger
 	InstanceId string
 	LogLevel   int
+	// This should be the hostname of the ELB.
+	ELBTarget string
 }
 
 // Internal DNS provider.
@@ -30,6 +31,7 @@ type ServiceBrokerDNSProvider struct {
 	logger     lager.Logger
 	instanceId string
 	settings   *ServiceBrokerDnsProviderSettings
+	elbTarget  string
 }
 
 func NewServiceBrokerDNSProvider(settings *ServiceBrokerDnsProviderSettings) *ServiceBrokerDNSProvider {
@@ -38,6 +40,7 @@ func NewServiceBrokerDNSProvider(settings *ServiceBrokerDnsProviderSettings) *Se
 		logger:     settings.Logger.Session("service-broker-dns-provider", lager.Data{"instance_id": settings.InstanceId}),
 		instanceId: settings.InstanceId,
 		settings:   settings,
+		elbTarget:  settings.ELBTarget,
 	}
 }
 
@@ -50,39 +53,16 @@ func (s ServiceBrokerDNSProvider) Timeout() (timeout, interval time.Duration) {
 type DomainMessenger struct {
 	gorm.Model `json:"-"`
 	Domain     string `json:"domain"`
+	TxtRecord  string `json:"txt_record"`
 	Token      string `json:"-"`
-	KeyAuth    string `json:"key_auth"`
+	KeyAuth    string `json:"txt_value"`
 	Message    string `json:"message"`
 	InstanceId string `json:"-"`
+	TTL        int    `json:"ttl"`
+	CNAME      string `json:"cname"`
 
 	// How long is left until the domain service needs to be authenticated.
 	ValidUntil time.Time `json:"valid_until"`
-}
-
-// String wraps a tabwriter into a string format for ease of use.
-// todo (mxplusb): figure out how to tell customers to set a short TTL on the TXT record.
-func (d DomainMessenger) String() string {
-	var buf []byte
-	w := bytes.NewBuffer(buf)
-
-	updatedRecord := fmt.Sprintf("_acme-challenge.%s", d.Domain)
-
-	if _, err := fmt.Fprintf(w, "\nTXT Record:\t\t\t%s\n", updatedRecord); err != nil {
-		// todo (mxplusb): no panic
-		panic(err)
-	}
-
-	if _, err := fmt.Fprintf(w, "TXT Record Value:\t%s\n", d.KeyAuth); err != nil {
-		// todo (mxplusb): no panic
-		panic(err)
-	}
-
-	if _, err := fmt.Fprintf(w, "Valid Until:\t\t%s\n", d.ValidUntil.Format(time.RFC850)); err != nil {
-		// todo (mxplusb): no panic
-		panic(err)
-	}
-
-	return w.String()
 }
 
 // Present our credentials to the handler.
@@ -96,7 +76,10 @@ func (s ServiceBrokerDNSProvider) Present(domain, token, keyAuth string) error {
 		Token:      token,
 		KeyAuth:    value,
 		Message:    msg,
+		TTL:        60,
+		TxtRecord:  fmt.Sprintf("_acme-challenge.%s", domain),
 		InstanceId: s.instanceId,
+		CNAME:      s.elbTarget,
 		ValidUntil: time.Now().Add(cfdomainbroker.DomainCreateTimeout),
 	}
 	s.logger.Debug("present-dns-challenge", lager.Data{

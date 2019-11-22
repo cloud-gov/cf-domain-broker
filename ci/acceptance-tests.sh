@@ -41,29 +41,22 @@ opts=$(jq -n --arg domains "${DOMAIN}" '{domains: [$domains]}')
 cf create-service -b "${BROKER_NAME}" "${SERVICE_NAME}" "${PLAN_NAME}" "${SERVICE_INSTANCE_NAME}" -c "${opts}"
 service_guid=$(cf service "${SERVICE_INSTANCE_NAME}" --guid)
 
-http_regex="CNAME or ALIAS domain\(s\) (.*) to (.*) or"
-dns_regex="TXT Record: (.*), Value: (.*), Valid Until: (.*)"
-
 elapsed=300
 until [ "${elapsed}" -le 0 ]; do
   status=$(cf curl "/v2/service_instances/${service_guid}")
-  description=$(echo "${status}" | jq -r '.entity.last_operation.description')
-  if [[ "${description}" =~ ${http_regex} ]]; then
-    domain_external="${BASH_REMATCH[1]}"
-    domain_internal="${BASH_REMATCH[2]}"
-  fi
-  if [[ "${description}" =~ ${dns_regex} ]]; then
-    txt_name="${BASH_REMATCH[1]}"
-    txt_value="${BASH_REMATCH[2]}"
-    txt_ttl="${BASH_REMATCH[3]}"
-  fi
-  if [ -n "${domain_external:-}" ] && [ -n "${txt_name:-}" ]; then
+  description=$(echo "${status}" | jq -r '.entity.last_operation.description | fromjson')
+  domain_external=$(echo "${description}" | jq -r '.[].domain')
+  alb_domain=$(echo "${description}" | jq -r '.[].cname')
+  txt_name=$(echo "${description}" | jq -r '.[].txt_record')
+  txt_value=$(echo "${description}" | jq -r '.[].txt_value')
+  txt_ttl=$(echo "${description}" | jq -r '.[].ttl')
+  if [ -n "${alb_domain:-}" ] && [ -n "${txt_name:-}" ]; then
     break
   fi
   let elapsed-=5
   sleep 5
 done
-if [ -z "${domain_internal:-}" ] || [ -z "${txt_name:-}" ]; then
+if [ -z "${alb_domain:-}" ] || [ -z "${txt_name:-}" ]; then
   echo "Failed to parse description: ${description}"
   exit 1
 fi

@@ -255,6 +255,10 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	}
 
 	s.Require().NotEmpty(localDomainMessenger.Domain, "domain value should not be empty")
+	s.Require().Equal("test.service", localDomainMessenger.Domain, "the domains should match")
+	s.Require().NotEmpty(localDomainMessenger.TxtRecord, "the txt record should not be empty.")
+	s.Require().NotEmpty(localDomainMessenger.CNAME, "the cname should not be empty.")
+	s.Require().Equal(60, localDomainMessenger.TTL, "the ttl must be 60 seconds.")
 	s.Require().NotEmpty(localDomainMessenger.KeyAuth, "keyauth value should not be empty")
 	s.Require().NotEmpty(localDomainMessenger.Token, "domain token should not be empty")
 

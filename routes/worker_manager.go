@@ -226,26 +226,6 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		w.settings.AcmeHttpClient = http.DefaultClient
 	}
 
-	// if we need to store the challenge for later upstream, create a new provider.
-	if w.settings.PersistentDnsProvider == true {
-		sbdnspSettings := &leproviders.ServiceBrokerDnsProviderSettings{
-			Db:         w.settings.Db,
-			Logger:     w.logger,
-			InstanceId: msg.InstanceId,
-			LogLevel:   w.settings.LogLevel,
-		}
-		w.settings.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(sbdnspSettings)
-	}
-
-	acmeClient, err := leproviders.NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
-	if err != nil {
-		lsession.Error("acme-new-client", err)
-		w.checkNetworkError(err)
-		w.provisioningErrorMap[msg.InstanceId] = err
-		return
-	}
-	lsession.Debug("acme-client-instantiated")
-
 	// find the least assigned ELB to assign the route to.
 	var targetElb *elbv2.LoadBalancer
 	leastAssigned := 0
@@ -265,6 +245,27 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 	lsession.Info("least-assigned-found", lager.Data{
 		"elb-target": &targetElb.LoadBalancerArn,
 	})
+
+	// if we need to store the challenge for later upstream, create a new provider.
+	if w.settings.PersistentDnsProvider == true {
+		sbdnspSettings := &leproviders.ServiceBrokerDnsProviderSettings{
+			Db:         w.settings.Db,
+			Logger:     w.logger,
+			InstanceId: msg.InstanceId,
+			LogLevel:   w.settings.LogLevel,
+			ELBTarget: *(targetElb.DNSName),
+		}
+		w.settings.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(sbdnspSettings)
+	}
+
+	acmeClient, err := leproviders.NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
+	if err != nil {
+		lsession.Error("acme-new-client", err)
+		w.checkNetworkError(err)
+		w.provisioningErrorMap[msg.InstanceId] = err
+		return
+	}
+	lsession.Debug("acme-client-instantiated")
 
 	if len(msg.DomainOpts.Domains) > 0 {
 		lsession.Debug("acme-dns-provider-assigned")
@@ -773,14 +774,6 @@ func (w *WorkerManager) lastOperation(msg LastOperationRequest, resp chan<- Last
 			Response:   innerLocalRespc,
 		}
 		innerLocalResp := <-innerLocalRespc
-
-		// just format the output beforehand so it looks nice.
-		if innerLocalResp.Error == nil && len(innerLocalResp.Messenger) > 0 {
-			for idx := range innerLocalResp.Messenger {
-				old := innerLocalResp.Messenger[idx].Domain
-				innerLocalResp.Messenger[idx].Domain = fmt.Sprintf("_acme-challenge.%s", old)
-			}
-		}
 
 		val, err := json.Marshal(innerLocalResp.Messenger)
 		if err != nil {

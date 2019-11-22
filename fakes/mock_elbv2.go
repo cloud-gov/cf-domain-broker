@@ -104,6 +104,7 @@ func (elb *MockELBV2API) CreateLoadBalancer(input *elbv2.CreateLoadBalancerInput
 		AvailabilityZones: make([]*elbv2.AvailabilityZone, 0),
 		Scheme:            input.Scheme,
 		VpcId:             aws.String(elb.VpcId),
+		DNSName:           aws.String(fmt.Sprintf("test-%s.us-gov-west-1.elb.amazonaws.com", elb.VpcId)),
 	}
 
 	elb.LoadBalancers = append(elb.LoadBalancers, lelb)
