@@ -28,16 +28,6 @@ func (s *DnsMessengerSuite) SetupTest() {
 	}
 }
 
-func (s *DnsMessengerSuite) TearDownTest() {}
-
-func (s *DnsMessengerSuite) TestDnsMessageWriter() {
-
-	tsVerification := `Please add the following text record to your DNS server. If you don't have the TXT record updated to the below value before the validity expires, you will need to create a new instance of this service.
-TXT Record:			_acme-challenge.test.domain
-TXT Record Value:	5678tyui
-Valid Until:		Monday, 01-Jan-01 00:00:00 UTC
-`
-
-	ts := s.dm.String()
-	s.Require().Equal(tsVerification, ts, "the domain messenger output should match.")
+func (s *DnsMessengerSuite) TearDownTest() {
+	s.dm = DomainMessenger{}
 }

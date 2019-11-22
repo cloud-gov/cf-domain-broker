@@ -6,6 +6,11 @@ resource_types:
     repository: cfcommunity/slack-notification-resource
 
 resources:
+- name: slack
+  type: slack-notification
+  icon: slack
+  source:
+    url: ((slack-webhook-url))
 - name: broker-src
   type: git
   icon: github-circle
@@ -49,11 +54,6 @@ resources:
 #    password: ((cf-deploy-password-production))
 #    organization: ((cf-organization-production))
 #    space: ((cf-space-production))
-
-- name: slack
-  type: slack-notification
-  source:
-    url: ((slack-webhook-url))
 
 cf-creds-development: &cf-creds-development
   CF_API_URL: ((cf-api-url-development))

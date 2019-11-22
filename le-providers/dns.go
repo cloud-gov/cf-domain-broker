@@ -12,6 +12,10 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
+const (
+	msg = `Please add the text record to your DNS server. If the TXT record isn't set to the below value before the validity expires, you will need to create a new instance of this service.`
+)
+
 type ServiceBrokerDnsProviderSettings struct {
 	Db         *gorm.DB
 	Logger     lager.Logger
@@ -48,6 +52,7 @@ type DomainMessenger struct {
 	Domain     string
 	Token      string
 	KeyAuth    string
+	Message    string
 	InstanceId string
 
 	// How long is left until the domain service needs to be authenticated.
@@ -62,7 +67,7 @@ func (d DomainMessenger) String() string {
 
 	updatedRecord := fmt.Sprintf("_acme-challenge.%s", d.Domain)
 
-	if _, err := fmt.Fprintf(w, "Please add the following text record to your DNS server. If you don't have the TXT record updated to the below value before the validity expires, you will need to create a new instance of this service.\nTXT Record:\t\t\t%s\n", updatedRecord); err != nil {
+	if _, err := fmt.Fprintf(w, "\nTXT Record:\t\t\t%s\n", updatedRecord); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}
@@ -87,9 +92,10 @@ func (s ServiceBrokerDNSProvider) Present(domain, token, keyAuth string) error {
 	value := base64.RawURLEncoding.EncodeToString(keyAuthShaBytes[:sha256.Size])
 
 	authRecord := DomainMessenger{
-		Domain:     domain,
+		Domain:     fmt.Sprintf("_acme-challenge.%s", domain),
 		Token:      token,
 		KeyAuth:    value,
+		Message:    msg,
 		InstanceId: s.instanceId,
 		ValidUntil: time.Now().Add(cfdomainbroker.DomainCreateTimeout),
 	}

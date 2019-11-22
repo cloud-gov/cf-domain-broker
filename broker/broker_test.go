@@ -50,9 +50,8 @@ type BrokerSuite struct {
 
 // This sets up the test suite before each test.
 func (s *BrokerSuite) SetupTest() {
-
 	var err error
-	s.DB, err = gorm.Open("sqlite3", ":memory:")
+	s.DB, err = gorm.Open("sqlite3", "test.db")
 	s.Require().NoError(err)
 
 	// migrate our DB to set up the schema.
@@ -70,6 +69,7 @@ func (s *BrokerSuite) SetupTest() {
 	internalResolver := fmt.Sprintf("localhost:%d", gravelOpts.DnsOpts.DnsPort)
 
 	gravelOpts.VAOpts.CustomResolverAddress = internalResolver // allows gravel to verify itself.
+	gravelOpts.DnsOpts.AlreadyHashed = true                 // we already hash the records.
 	gravelOpts.AutoUpdateAuthZRecords = true                   // enable to just give us the certificate.
 	s.Gravel, err = gravel.New(gravelOpts)
 	s.Require().NoError(err)
@@ -162,6 +162,10 @@ func (s *BrokerSuite) TearDownTest() {
 		s.Require().NoError(err, "there should not be an error closing the test db")
 	}
 
+	if err := os.Remove("test.db"); err != nil {
+		s.Require().NoError(err, "there should be no error deleting the test db file.")
+	}
+
 	s.DB = &gorm.DB{}
 
 	if err := s.Gravel.CertificateServer.Shutdown(context.TODO()); err != nil {
@@ -226,6 +230,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	)
 
 	s.Gravel.Opts.AutoUpdateAuthZRecords = false
+	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = false
 	s.WorkerManagerSettings.PersistentDnsProvider = true
 
 	// test the domain plan.
@@ -255,6 +260,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	// reset the configuration to let the DNS pass the authorization. since the record is already hashed, no need to
 	// have the server do it.
 	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = true
+	s.Gravel.Opts.AutoUpdateAuthZRecords = true
 	s.Gravel.Opts.DnsOpts.AlreadyHashed = true
 
 	// send the record to the dns server

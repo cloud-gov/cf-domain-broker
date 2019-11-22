@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
-	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"code.cloudfoundry.org/lager"
@@ -238,6 +240,7 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 	acmeClient, err := leproviders.NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
 	if err != nil {
 		lsession.Error("acme-new-client", err)
+		w.checkNetworkError(err)
 		w.provisioningErrorMap[msg.InstanceId] = err
 		return
 	}
@@ -279,6 +282,7 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		})
 		user.Registration = reg
 		lsession.Debug("acme-user-registered")
+		w.checkNetworkError(err)
 
 		// store the certificate and elb info the database.
 		// check for debug.
@@ -313,6 +317,7 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		if err != nil {
 			lsession.Error("acme-certificate-obtain", err)
 			w.provisioningErrorMap[msg.InstanceId] = err
+			w.checkNetworkError(err)
 			return
 		}
 		lsession.Info("certificate-obtained")
@@ -325,12 +330,14 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		if w.settings.LogLevel == 1 {
 			if err := w.settings.Db.Debug().Create(&localCert).Error; err != nil {
 				lsession.Error("db-save-certificate", err)
+				w.checkNetworkError(err)
 				w.provisioningErrorMap[msg.InstanceId] = err
 				return
 			}
 		} else {
 			if err := w.settings.Db.Create(&localCert).Error; err != nil {
 				lsession.Error("db-save-certificate", err)
+				w.checkNetworkError(err)
 				w.provisioningErrorMap[msg.InstanceId] = err
 				return
 			}
@@ -350,6 +357,7 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		certArn, err := w.settings.IamSvc.UploadServerCertificate(certUploadInput)
 		if err != nil {
 			lsession.Error("iam-upload-server-certificate", err)
+			w.checkNetworkError(err)
 			w.provisioningErrorMap[msg.InstanceId] = err
 			return
 		}
@@ -367,12 +375,14 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		if w.settings.LogLevel == 1 {
 			if err := w.settings.Db.Debug().Model(&localCert).Where("instance_id = ?", msg.InstanceId).Save(&localCert).Error; err != nil {
 				lsession.Error("db-update-certificate-arn", err)
+				w.checkNetworkError(err)
 				w.provisioningErrorMap[msg.InstanceId] = err
 				return
 			}
 		} else {
 			if err := w.settings.Db.Model(&localCert).Where("instance_id = ?", msg.InstanceId).Save(&localCert).Error; err != nil {
 				lsession.Error("db-update-certificate-arn", err)
+				w.checkNetworkError(err)
 				w.provisioningErrorMap[msg.InstanceId] = err
 				return
 			}
@@ -423,6 +433,7 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 			},
 		}); err != nil {
 			lsession.Error("elbsvc-add-listener-certificates", err)
+			w.checkNetworkError(err)
 			w.provisioningErrorMap[msg.InstanceId] = err
 			return
 		}
@@ -434,6 +445,7 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		// store the certificate and elb info the database.
 		if err := w.settings.Db.Save(localDomainRoute).Error; err != nil {
 			lsession.Error("db-save-route", err)
+			w.checkNetworkError(err)
 			w.provisioningErrorMap[msg.InstanceId] = err
 			return
 		}
@@ -474,6 +486,34 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 	//		return
 	//	}
 	//}
+}
+
+// internal error checker to see if we need to panic on networking-related errors.
+// real talk: this mostly exists because macos is flaky af on networking when it comes to opening and closing ports in
+// random succession.
+func (w *WorkerManager) checkNetworkError(err error) {
+	if err == nil {
+		return // we're okay so skip it.
+	} else if netError, ok := err.(net.Error); ok && netError.Timeout() {
+		w.logger.Error("network-timeout", err)
+		return
+	}
+
+	// we're just checking to see if we need to panic.
+	// if we don't need to panic, this will pass and
+	// whatever logic called this will keep going.
+	switch t := err.(type) {
+	case *net.OpError:
+		if t.Op == "dial" {
+			w.logger.Fatal("unknown-host", err)
+		} else if t.Op == "read" {
+			w.logger.Fatal("connection-refused", err)
+		}
+	case syscall.Errno:
+		if t == syscall.ECONNREFUSED {
+			w.logger.Fatal("connection-refused", err)
+		}
+	}
 }
 
 type DeprovisionRequest struct {
@@ -734,18 +774,19 @@ func (w *WorkerManager) lastOperation(msg LastOperationRequest, resp chan<- Last
 		}
 		innerLocalResp := <-innerLocalRespc
 
-		var sb strings.Builder
-		for idx := range innerLocalResp.Messenger {
-			if _, err := fmt.Fprint(&sb, innerLocalResp.Messenger[idx].String()); err != nil {
-				lsession.Error("string-builder-fprint", err)
-			}
+		val, err := json.Marshal(innerLocalResp.Messenger)
+		if err != nil {
+			innerLocalResp.Error = err
+			resp <- localResp
+			return
 		}
 
 		localResp.LastOperation = domain.LastOperation{
 			State:       domain.InProgress,
-			Description: sb.String(),
+			Description: string(val),
 		}
 		resp <- localResp
+
 	case cfdomainbroker.Deprovisioning:
 		lsession.Info("check-deprovisioning")
 
