@@ -92,7 +92,7 @@ func (s ServiceBrokerDNSProvider) Present(domain, token, keyAuth string) error {
 	value := base64.RawURLEncoding.EncodeToString(keyAuthShaBytes[:sha256.Size])
 
 	authRecord := DomainMessenger{
-		Domain:     fmt.Sprintf("_acme-challenge.%s", domain),
+		Domain:     domain,
 		Token:      token,
 		KeyAuth:    value,
 		Message:    msg,

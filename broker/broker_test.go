@@ -69,8 +69,8 @@ func (s *BrokerSuite) SetupTest() {
 	internalResolver := fmt.Sprintf("localhost:%d", gravelOpts.DnsOpts.DnsPort)
 
 	gravelOpts.VAOpts.CustomResolverAddress = internalResolver // allows gravel to verify itself.
-	gravelOpts.DnsOpts.AlreadyHashed = true                 // we already hash the records.
-	gravelOpts.AutoUpdateAuthZRecords = true                   // enable to just give us the certificate.
+	//gravelOpts.AutoUpdateAuthZRecords = true                   // enable to just give us the certificate.
+	gravelOpts.DnsOpts.AutoUpdateAuthZRecords = true // enable to just give us the certificate.
 	s.Gravel, err = gravel.New(gravelOpts)
 	s.Require().NoError(err)
 
@@ -137,12 +137,12 @@ func (s *BrokerSuite) SetupTest() {
 		Logger:                      loggerSession,
 	}
 
-	workerManager := routes.NewWorkerManager(s.WorkerManagerSettings)
+	s.WorkerManager = routes.NewWorkerManager(s.WorkerManagerSettings)
 
 	s.DomainBrokerSettings = &DomainBrokerSettings{
 		Db:            s.DB,
 		Logger:        loggerSession,
-		WorkerManager: workerManager,
+		WorkerManager: s.WorkerManager,
 	}
 
 	s.DomainBroker = NewDomainBroker(s.DomainBrokerSettings)
@@ -198,7 +198,7 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep a bit to let the workers do their thing.
-	time.Sleep(time.Second * 5)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	var verifyRoute models.DomainRoute
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&verifyRoute).Error; err != nil {
@@ -206,6 +206,8 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 	}
 
 	s.Require().NotNil(verifyRoute, "the route must not be empty")
+
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	localCert := &models.Certificate{}
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).First(&localCert).Error; err != nil {
@@ -229,7 +231,6 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 		serviceInstanceId = uuid.New()
 	)
 
-	s.Gravel.Opts.AutoUpdateAuthZRecords = false
 	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = false
 	s.WorkerManagerSettings.PersistentDnsProvider = true
 
@@ -246,7 +247,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep for a bit to let the cert get issued and the db store things.
-	time.Sleep(time.Second * 5)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	var localDomainMessenger leproviders.DomainMessenger
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessenger).Error; err != nil {
@@ -260,7 +261,6 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	// reset the configuration to let the DNS pass the authorization. since the record is already hashed, no need to
 	// have the server do it.
 	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = true
-	s.Gravel.Opts.AutoUpdateAuthZRecords = true
 	s.Gravel.Opts.DnsOpts.AlreadyHashed = true
 
 	// send the record to the dns server
@@ -270,8 +270,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 		KeyAuth: localDomainMessenger.KeyAuth,
 	}
 
-	// sleep for awhile until the client checks things normally.
-	time.Sleep(cfdomainbroker.DomainCreateCheck * 2)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
 	localCert := models.Certificate{
 		InstanceId: serviceInstanceId,
@@ -304,7 +303,7 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleSAN() 
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep a bit to let the workers do their thing.
-	time.Sleep(time.Second * 15)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	var verifyRoute models.DomainRoute
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).First(&verifyRoute).Error; err != nil {
@@ -351,7 +350,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep for a bit to let the cert get issues and the db store things.
-	time.Sleep(time.Second * 5)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
 	var localDomainMessengers []leproviders.DomainMessenger
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessengers).Error; err != nil {
@@ -375,8 +374,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 	// have the server do it.
 	s.Gravel.Opts.DnsOpts.AutoUpdateAuthZRecords = true
 
-	// sleep for awhile until the client checks things normally.
-	time.Sleep(cfdomainbroker.DomainCreateCheck * 2)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
 	localCert := models.Certificate{
 		InstanceId: serviceInstanceId,
@@ -407,7 +405,7 @@ func (s *BrokerSuite) TestDomainBroker_Deprovision() {
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep a bit to let the workers do their thing.
-	time.Sleep(time.Second * 5)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	delResp, err := s.DomainBroker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
 		PlanID:    "",
@@ -418,7 +416,7 @@ func (s *BrokerSuite) TestDomainBroker_Deprovision() {
 	s.Require().Equal(true, delResp.IsAsync, "deprovision must be async")
 
 	// sleep a bit to let the workers do their thing.
-	time.Sleep(time.Second * 5)
+	s.awaiter(serviceInstanceId, "there should be no deprovisioning errors", false)
 
 	// verify the route does not exist in the db.
 	localRoute := models.DomainRoute{
@@ -448,7 +446,7 @@ func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep a bit to let the workers do their thing.
-	time.Sleep(time.Second * 5)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	delResp, err := s.DomainBroker.Deprovision(context.Background(), serviceInstanceId, domain.DeprovisionDetails{
 		PlanID:    "",
@@ -517,4 +515,35 @@ func (s *BrokerSuite) TestDomainBroker_LastBindingOperation() {
 
 	// sleep a bit to let the workers finish spinning up before the test ends.
 	time.Sleep(time.Second * 2)
+}
+
+// Sleeper for awaiting an instance provisioning.
+func (s *BrokerSuite) awaiter(si, description string, wait bool) {
+	var timeout *time.Timer
+	if !wait {
+		timeout = time.NewTimer(time.Second * 10)
+	} else {
+		timeout = time.NewTimer(cfdomainbroker.DomainCreateCheck * 2)
+	}
+	ticker := time.NewTicker(time.Second * 1)
+	for {
+		select {
+		case <-timeout.C:
+			return // "I want to break free" -Freddie Mercury
+		case <-ticker.C:
+			s.Require().NoError(func() error {
+				getInstanceRespChan := make(chan routes.GetInstanceResponse, 1)
+				s.WorkerManager.RequestRouter <- routes.GetInstanceRequest{
+					Context:    context.TODO(),
+					InstanceId: si,
+					Response:   getInstanceRespChan,
+				}
+				resp := <-getInstanceRespChan
+				if resp.ErrorNotFound { // that will happen for awhile, we're just checking for provisioning errors specifically.
+					return nil
+				}
+				return resp.Error
+			}(), description)
+		}
+	}
 }
