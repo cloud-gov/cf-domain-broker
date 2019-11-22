@@ -62,7 +62,7 @@ func (d DomainMessenger) String() string {
 
 	updatedRecord := fmt.Sprintf("_acme-challenge.%s", d.Domain)
 
-	if _, err := fmt.Fprintf(w, "Please add the following text record to your DNS server. If you don't have the TXT record updated to the below value before the validity expires, you will need to create a new instance of this service.\nTXT Record:\t%s\n", updatedRecord); err != nil {
+	if _, err := fmt.Fprintf(w, "Please add the following text record to your DNS server. If you don't have the TXT record updated to the below value before the validity expires, you will need to create a new instance of this service.\nTXT Record:\t\t\t%s\n", updatedRecord); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}
@@ -72,12 +72,12 @@ func (d DomainMessenger) String() string {
 		panic(err)
 	}
 
-	if _, err := fmt.Fprintf(w, "Valid Until:\t%s\n", d.ValidUntil.Format(time.RFC850)); err != nil {
+	if _, err := fmt.Fprintf(w, "Valid Until:\t\t%s\n", d.ValidUntil.Format(time.RFC850)); err != nil {
 		// todo (mxplusb): no panic
 		panic(err)
 	}
 
-	return string(buf)
+	return w.String()
 }
 
 // Present our credentials to the handler.

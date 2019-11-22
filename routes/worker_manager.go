@@ -438,6 +438,8 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 			return
 		}
 
+		// todo (mxplusb): delete domain message data - i.e. keyAuth.
+
 	}
 	//else if len(msg.CdnOpts.Domain) > 0 {
 	//	// create the route struct and add the user reference.
