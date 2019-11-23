@@ -73,7 +73,7 @@ cat <<EOF >./create-cname.json
         "Type": "CNAME",
         "TTL": ${TTL},
         "ResourceRecords": [
-          {"Value": "${domain_internal}"}
+          {"Value": "${alb_domain}"}
         ]
       }
     }
@@ -179,7 +179,7 @@ if [ "${DELETE_SERVICE:-"true"}" == "true" ]; then
         "Type": "CNAME",
         "TTL": ${TTL},
         "ResourceRecords": [
-          {"Value": "${domain_internal}"}
+          {"Value": "${alb_domain}"}
         ]
       }
     }
