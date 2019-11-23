@@ -44,7 +44,8 @@ service_guid=$(cf service "${SERVICE_INSTANCE_NAME}" --guid)
 elapsed=300
 until [ "${elapsed}" -le 0 ]; do
   status=$(cf curl "/v2/service_instances/${service_guid}")
-  description=$(echo "${status}" | jq -r '.entity.last_operation.description | fromjson')
+  description=$(echo "${status}" | jq -r 'select(.entity.last_operation.description != "") | .entity.last_operation.description | fromjson')
+  if [ -z "${description:-}" ]; then let elapsed-=5; sleep 5; continue; fi
   domain_external=$(echo "${description}" | jq -r '.[].domain')
   alb_domain=$(echo "${description}" | jq -r '.[].cname')
   txt_name=$(echo "${description}" | jq -r '.[].txt_record')
