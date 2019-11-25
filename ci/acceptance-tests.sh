@@ -109,6 +109,9 @@ elif [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
   aws route53 change-resource-record-sets \
     --hosted-zone-id "${HOSTED_ZONE_ID}" \
     --change-batch file://./create-txt.json
+    aws route53 change-resource-record-sets \
+    --hosted-zone-id "${HOSTED_ZONE_ID}" \
+    --change-batch file://./create-cname.json
 fi
 
 # Wait for provision to complete
@@ -129,13 +132,6 @@ done
 if [ "${updated}" != "true" ]; then
   echo "Failed to update service ${SERVICE_NAME}"
   exit 1
-fi
-
-# Create CNAME after provisioning if using DNS-01 challenge
-if [ "${CHALLENGE_TYPE}" = "DNS-01" ]; then
-  aws route53 change-resource-record-sets \
-    --hosted-zone-id "${HOSTED_ZONE_ID}" \
-    --change-batch file://./create-cname.json
 fi
 
 # Push test app
