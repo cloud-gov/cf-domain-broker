@@ -1,9 +1,11 @@
 package le_providers
 
 import (
+	"fmt"
 	"net/http"
 
 	"code.cloudfoundry.org/lager"
+	cf_domain_broker "github.com/18f/cf-domain-broker"
 	"github.com/go-acme/lego/v3/challenge"
 	"github.com/go-acme/lego/v3/challenge/dns01"
 	"github.com/go-acme/lego/v3/lego"
@@ -18,7 +20,8 @@ type AcmeClient struct {
 	AcmeConfig  *lego.Config
 	InstanceId  string
 
-	logger lager.Logger
+	goodResolution int
+	logger         lager.Logger
 }
 
 // NewAcmeClient generates a new client with the target config.
@@ -114,37 +117,33 @@ func (a *AcmeClient) preCheck(domain, fqdn, value string, check dns01.PreCheckFu
 		}
 	}
 
-	// true == 1 and false == 0 as helper functions because go doesn't support bitwise xor on booleans.
-	// we need these so we can return `true | false`, depending on whichever resolves first.
-	itobfn := func(b bool) int {
-		if b {
-			return 1
-		} else {
-			return 0
-		}
-	}
-	btoifn := func(i int) bool {
-		if i == 0 {
-			return false
-		} else {
-			return true
-		}
-	}
-
 	lsession.Debug("checking-resolver-state")
 
-	var state = false
+	var goodResolvers int
 
-	// for every resolver, if any resolver returns positive, we can resolve this record.
+	// loop to see how many resolvers are good.
 	for idx := range resolverStates {
-		if btoifn(itobfn(resolverStates[idx]) | itobfn(state)) {
-			state = true
+		if resolverStates[idx] {
+			goodResolvers += 1
 		}
 	}
+
 	lsession.Debug("resolver-state-check-complete", lager.Data{
-		"global-resolver-state": state,
+		"global-resolver-state": fmt.Sprintf("%d/%d", goodResolvers, len(a.Resolvers)),
 	})
 
-	// return whichever one resolves.
-	return state, nil
+	switch {
+	case a.goodResolution == cf_domain_broker.GoodResolutionCount: // we've waited awhile and all the records are resolving multiple times, so things are good.
+	lsession.Info("stable-dns-resolution")
+		return true, nil
+	case goodResolvers < len(a.Resolvers): // not everything is resolving properly.
+	lsession.Info("not-all-resolvers-found-record")
+		return false, nil
+	case goodResolvers == len(a.Resolvers): // not waited long enough but resolution is good.
+	lsession.Info("testing-dns-resolution-stability")
+		a.goodResolution += 1
+		return false, nil
+	default: // required by law
+		return false, nil
+	}
 }

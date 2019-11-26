@@ -30,6 +30,8 @@ const (
 	Provisioned    State = 1
 	Deprovisioning State = 2
 	Deprovisioned  State = 3
+
+	GoodResolutionCount = 3
 )
 
 type State int

@@ -521,13 +521,13 @@ func (s *BrokerSuite) TestDomainBroker_LastBindingOperation() {
 	time.Sleep(time.Second * 2)
 }
 
-// Sleeper for awaiting an instance provisioning.
+// Sleeper for awaiting an instance provisioning, this mostly exists as a blocking function.
 func (s *BrokerSuite) awaiter(si, description string, wait bool) {
 	var timeout *time.Timer
 	if !wait {
 		timeout = time.NewTimer(time.Second * 10)
 	} else {
-		timeout = time.NewTimer(cfdomainbroker.DomainCreateCheck * 2)
+		timeout = time.NewTimer(cfdomainbroker.DomainCreateCheck * 5)
 	}
 	ticker := time.NewTicker(time.Second * 1)
 	for {
