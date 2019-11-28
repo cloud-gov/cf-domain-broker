@@ -19,6 +19,7 @@ require (
 	github.com/pborman/uuid v1.2.0
 	github.com/pivotal-cf/brokerapi v6.4.2+incompatible
 	github.com/stretchr/testify v1.4.0
+	go.uber.org/ratelimit v0.1.0 // indirect
 	golang.org/x/crypto v0.0.0-20191117063200-497ca9f6d64f // indirect
 	golang.org/x/net v0.0.0-20191119073136-fc4aabc6c914 // indirect
 	golang.org/x/sys v0.0.0-20191119060738-e882bf8e40c2 // indirect

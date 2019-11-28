@@ -2,7 +2,7 @@ package models
 
 import (
 	cfdomainbroker "github.com/18f/cf-domain-broker"
-	leproviders "github.com/18f/cf-domain-broker/le-providers"
+	"github.com/18f/cf-domain-broker/managers"
 	"github.com/jinzhu/gorm"
 )
 
@@ -19,7 +19,7 @@ type DomainRoute struct {
 	User UserData `gorm:"not null"`
 
 	// The DNS challenge data.
-	DNSChallenge leproviders.DomainMessenger
+	DNSChallenge managers.DomainMessenger
 
 	// The ELB the route is tied to.
 	ELBArn string

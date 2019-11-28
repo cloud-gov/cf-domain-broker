@@ -1,4 +1,4 @@
-package le_providers
+package managers
 
 import (
 	"testing"

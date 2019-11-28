@@ -8,8 +8,8 @@ import (
 
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
+	"github.com/18f/cf-domain-broker/managers"
 	"github.com/18f/cf-domain-broker/models"
-	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/jinzhu/gorm"
 	"github.com/pivotal-cf/brokerapi/domain"
@@ -19,13 +19,13 @@ import (
 type DomainBrokerSettings struct {
 	Db            *gorm.DB
 	Logger        lager.Logger
-	WorkerManager *routes.WorkerManager
+	WorkerManager *managers.WorkerManager
 }
 
 type DomainBroker struct {
 	logger        lager.Logger
 	settings      *DomainBrokerSettings
-	workerManager *routes.WorkerManager
+	workerManager *managers.WorkerManager
 }
 
 func NewDomainBroker(settings *DomainBrokerSettings) *DomainBroker {
@@ -165,8 +165,8 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	})
 
 	// check for duplicates.
-	getInstanceResponse := make(chan routes.GetInstanceResponse, 1)
-	d.workerManager.RequestRouter <- routes.GetInstanceRequest{
+	getInstanceResponse := make(chan managers.GetInstanceResponse, 1)
+	d.workerManager.RequestRouter <- managers.GetInstanceRequest{
 		Context:    ctx,
 		InstanceId: instanceID,
 		Response:   getInstanceResponse,
@@ -192,7 +192,7 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 	}
 
 	// build the request
-	req := routes.ProvisionRequest{
+	req := managers.ProvisionRequest{
 		Context:    ctx,
 		InstanceId: instanceID,
 		DomainOpts: domOpts,
@@ -207,8 +207,8 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 }
 
 func (d *DomainBroker) Deprovision(ctx context.Context, instanceID string, details domain.DeprovisionDetails, asyncAllowed bool) (domain.DeprovisionServiceSpec, error) {
-	getInstanceResponsec := make(chan routes.GetInstanceResponse, 1)
-	d.workerManager.RequestRouter <- routes.GetInstanceRequest{
+	getInstanceResponsec := make(chan managers.GetInstanceResponse, 1)
+	d.workerManager.RequestRouter <- managers.GetInstanceRequest{
 		Context:    ctx,
 		InstanceId: instanceID,
 		Response:   getInstanceResponsec,
@@ -219,8 +219,8 @@ func (d *DomainBroker) Deprovision(ctx context.Context, instanceID string, detai
 		return domain.DeprovisionServiceSpec{}, getInstanceResponse.Error
 	}
 
-	deprovisionResponsec := make(chan routes.DeprovisionResponse, 1)
-	d.workerManager.RequestRouter <- routes.DeprovisionRequest{
+	deprovisionResponsec := make(chan managers.DeprovisionResponse, 1)
+	d.workerManager.RequestRouter <- managers.DeprovisionRequest{
 		Context:      ctx,
 		InstanceId:   instanceID,
 		Details:      details,
@@ -254,8 +254,8 @@ func (d *DomainBroker) Update(ctx context.Context, instanceID string, details do
 }
 
 func (d *DomainBroker) LastOperation(ctx context.Context, instanceID string, details domain.PollDetails) (domain.LastOperation, error) {
-	lastOpsRespc := make(chan routes.LastOperationResponse, 1)
-	lastOpReq := routes.LastOperationRequest{
+	lastOpsRespc := make(chan managers.LastOperationResponse, 1)
+	lastOpReq := managers.LastOperationRequest{
 		Context:    ctx,
 		InstanceId: instanceID,
 		Details:    details,

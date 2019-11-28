@@ -11,9 +11,8 @@ import (
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/fakes"
-	leproviders "github.com/18f/cf-domain-broker/le-providers"
+	"github.com/18f/cf-domain-broker/managers"
 	"github.com/18f/cf-domain-broker/models"
-	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/18f/gravel"
 	"github.com/18f/gravel/dns"
@@ -38,8 +37,8 @@ type BrokerSuite struct {
 	suite.Suite
 	DomainBrokerSettings  *DomainBrokerSettings
 	DomainBroker          *DomainBroker
-	WorkerManagerSettings *routes.WorkerManagerSettings
-	WorkerManager         *routes.WorkerManager
+	WorkerManagerSettings *managers.WorkerManagerSettings
+	WorkerManager         *managers.WorkerManager
 	RuntimeSettings       *types.RuntimeSettings
 
 	DB     *gorm.DB
@@ -59,7 +58,7 @@ func (s *BrokerSuite) SetupTest() {
 		&models.UserData{},
 		&models.Domain{},
 		&models.Certificate{},
-		&leproviders.DomainMessenger{}).Error; err != nil {
+		&managers.DomainMessenger{}).Error; err != nil {
 		s.Require().NoError(err)
 	}
 
@@ -120,8 +119,8 @@ func (s *BrokerSuite) SetupTest() {
 	logger.RegisterSink(fatalSink)
 	loggerSession := logger.Session("suite")
 
-	s.WorkerManagerSettings = &routes.WorkerManagerSettings{
-		AutostartWorkerPool:         true,
+	s.WorkerManagerSettings = &managers.WorkerManagerSettings{
+		AutoStartWorkerPool:         true,
 		AcmeHttpClient:              s.Gravel.Client,
 		AcmeUrl:                     s.RuntimeSettings.AcmeUrl,
 		AcmeEmail:                   s.RuntimeSettings.Email,
@@ -137,7 +136,7 @@ func (s *BrokerSuite) SetupTest() {
 		Logger:                      loggerSession,
 	}
 
-	s.WorkerManager = routes.NewWorkerManager(s.WorkerManagerSettings)
+	s.WorkerManager = managers.NewWorkerManager(s.WorkerManagerSettings)
 
 	s.DomainBrokerSettings = &DomainBrokerSettings{
 		Db:            s.DB,
@@ -154,8 +153,8 @@ func (s *BrokerSuite) TearDownTest() {
 	// clear everything so it can be rebuilt on the next test.
 	s.DomainBrokerSettings = &DomainBrokerSettings{}
 	s.DomainBroker = &DomainBroker{}
-	s.WorkerManagerSettings = &routes.WorkerManagerSettings{}
-	s.WorkerManager = &routes.WorkerManager{}
+	s.WorkerManagerSettings = &managers.WorkerManagerSettings{}
+	s.WorkerManager = &managers.WorkerManager{}
 	s.RuntimeSettings = &types.RuntimeSettings{}
 
 	if err := s.DB.Close(); err != nil {
@@ -249,7 +248,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	// sleep for a bit to let the cert get issued and the db store things.
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
-	var localDomainMessenger leproviders.DomainMessenger
+	var localDomainMessenger managers.DomainMessenger
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessenger).Error; err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
 	}
@@ -356,7 +355,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 	// sleep for a bit to let the cert get issues and the db store things.
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
-	var localDomainMessengers []leproviders.DomainMessenger
+	var localDomainMessengers []managers.DomainMessenger
 	if err := s.DB.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessengers).Error; err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
 	}
@@ -536,8 +535,8 @@ func (s *BrokerSuite) awaiter(si, description string, wait bool) {
 			return // "I want to break free" -Freddie Mercury
 		case <-ticker.C:
 			s.Require().NoError(func() error {
-				getInstanceRespChan := make(chan routes.GetInstanceResponse, 1)
-				s.WorkerManager.RequestRouter <- routes.GetInstanceRequest{
+				getInstanceRespChan := make(chan managers.GetInstanceResponse, 1)
+				s.WorkerManager.RequestRouter <- managers.GetInstanceRequest{
 					Context:    context.TODO(),
 					InstanceId: si,
 					Response:   getInstanceRespChan,

@@ -1,4 +1,4 @@
-package routes
+package managers
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
-	leproviders "github.com/18f/cf-domain-broker/le-providers"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/aws/aws-sdk-go/aws"
@@ -35,7 +34,7 @@ import (
 )
 
 type WorkerManagerSettings struct {
-	AutostartWorkerPool         bool
+	AutoStartWorkerPool         bool
 	AcmeHttpClient              *http.Client
 	AcmeUrl                     string
 	AcmeEmail                   string
@@ -50,6 +49,7 @@ type WorkerManagerSettings struct {
 	Resolvers                   map[string]string
 	Logger                      lager.Logger
 	LogLevel                    int
+	ObtainmentManagerSettings   *ObtainmentManagerSettings
 }
 
 // The Worker Manager is designed to be a totally asynchronous, message-driven interface on behalf of the Service Broker
@@ -58,6 +58,7 @@ type WorkerManagerSettings struct {
 // requested.
 type WorkerManager struct {
 	RequestRouter               chan interface{}
+	Running                     bool
 	settings                    *WorkerManagerSettings
 	provisionRequest            chan ProvisionRequest
 	deprovisionRequest          chan DeprovisionRequest
@@ -72,6 +73,7 @@ type WorkerManager struct {
 
 	provisioningErrorMap   map[string]error
 	deprovisioningErrorMap map[string]error
+	obtainmentManager      *ObtainmentManager
 	elbs                   []*elb
 	logger                 lager.Logger
 	lock                   sync.RWMutex
@@ -82,7 +84,7 @@ type elb struct {
 	certsOnListener int
 }
 
-func NewWorkerManager(settings *WorkerManagerSettings) *WorkerManager {
+func NewWorkerManager(settings *WorkerManagerSettings) (*WorkerManager, error) {
 	p := &WorkerManager{
 		RequestRouter:               make(chan interface{}, 150),
 		settings:                    settings,
@@ -101,11 +103,22 @@ func NewWorkerManager(settings *WorkerManagerSettings) *WorkerManager {
 		dnsInstructionsRequest:      make(chan DnsInstructionsRequest, 150),
 	}
 
-	if p.settings.AutostartWorkerPool {
-		p.Run()
+	om, err := NewObtainmentManager(settings.ObtainmentManagerSettings)
+	if err != nil {
+		return &WorkerManager{}, err
+	}
+	p.obtainmentManager = om
+	if !p.obtainmentManager.Running {
+		go p.obtainmentManager.Run()
 	}
 
-	return p
+	if p.settings.AutoStartWorkerPool {
+		go p.Run()
+		p.Running = true
+	}
+	p.Running = false
+
+	return p, nil
 }
 
 // Runs the worker pool. Can be automatically invoked via a setting with `NewWorkerManager`.
@@ -248,17 +261,17 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 
 	// if we need to store the challenge for later upstream, create a new provider.
 	if w.settings.PersistentDnsProvider == true {
-		sbdnspSettings := &leproviders.ServiceBrokerDnsProviderSettings{
+		sbdnspSettings := &ServiceBrokerDnsProviderSettings{
 			Db:         w.settings.Db,
 			Logger:     w.logger,
 			InstanceId: msg.InstanceId,
 			LogLevel:   w.settings.LogLevel,
-			ELBTarget: *(targetElb.DNSName),
+			ELBTarget:  *(targetElb.DNSName),
 		}
-		w.settings.DnsChallengeProvider = leproviders.NewServiceBrokerDNSProvider(sbdnspSettings)
+		w.settings.DnsChallengeProvider = NewServiceBrokerDNSProvider(sbdnspSettings)
 	}
 
-	acmeClient, err := leproviders.NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
+	acmeClient, err := NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
 	if err != nil {
 		lsession.Error("acme-new-client", err)
 		w.checkNetworkError(err)
@@ -463,7 +476,7 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 	//
 	//	localCDNRoute := &models.DomainRoute{
 	//		InstanceId:     msg.InstanceId,
-	//		State:          cfdomainbroker.Provisioning,
+	//		ObtainState:          cfdomainbroker.Provisioning,
 	//		User:           user,
 	//		DomainExternal: domains,
 	//		Origin:         msg.CdnOpts.Origin,
@@ -806,7 +819,7 @@ type DnsInstructionsRequest struct {
 }
 
 type DnsInstructionsResponse struct {
-	Messenger []leproviders.DomainMessenger
+	Messenger []DomainMessenger
 	Error     error
 }
 
@@ -828,7 +841,7 @@ func (w *WorkerManager) getDnsInstructions(msg DnsInstructionsRequest, resp chan
 		Error: nil,
 	}
 
-	var domainMessage []leproviders.DomainMessenger
+	var domainMessage []DomainMessenger
 	if err := w.settings.Db.Where("instance_id = ?", msg.InstanceId).Find(&domainMessage).Error; err != nil {
 		lsession.Error("db-find-dns-instructions", err)
 		localResp.Error = err

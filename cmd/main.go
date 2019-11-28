@@ -10,9 +10,8 @@ import (
 	"time"
 
 	"github.com/18f/cf-domain-broker/broker"
-	le_providers "github.com/18f/cf-domain-broker/le-providers"
+	"github.com/18f/cf-domain-broker/managers"
 	"github.com/18f/cf-domain-broker/models"
-	"github.com/18f/cf-domain-broker/routes"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/service/cloudfront"
@@ -107,7 +106,7 @@ func initBrokerConfig() *broker.DomainBroker {
 		&models.UserData{},
 		&models.Domain{},
 		&models.Certificate{},
-		&le_providers.DomainMessenger{}).Error; err != nil {
+		&managers.DomainMessenger{}).Error; err != nil {
 		logger.Fatal("db-auto-migrate", err)
 	}
 
@@ -122,8 +121,8 @@ func initBrokerConfig() *broker.DomainBroker {
 		albNames = append(albNames, aws.String(runtimeSettings.ALBNames[idx]))
 	}
 
-	workerManagerSettings := &routes.WorkerManagerSettings{
-		AutostartWorkerPool:         true,
+	workerManagerSettings := &managers.WorkerManagerSettings{
+		AutoStartWorkerPool:         true,
 		AcmeHttpClient:              http.DefaultClient,
 		AcmeUrl:                     runtimeSettings.AcmeUrl,
 		AcmeEmail:                   runtimeSettings.Email,
@@ -140,7 +139,7 @@ func initBrokerConfig() *broker.DomainBroker {
 		Logger:                      logger,
 	}
 
-	workerManager := routes.NewWorkerManager(workerManagerSettings)
+	workerManager := managers.NewWorkerManager(workerManagerSettings)
 
 	domainBrokerSettings := &broker.DomainBrokerSettings{
 		Db:            db,
