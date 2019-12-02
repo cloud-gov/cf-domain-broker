@@ -11,6 +11,7 @@ require (
 	github.com/drewolson/testflight v1.0.0 // indirect
 	github.com/go-acme/lego/v3 v3.2.0
 	github.com/jinzhu/gorm v1.9.11
+	github.com/jinzhu/now v1.1.1 // indirect
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/lib/pq v1.2.0 // indirect
 	github.com/miekg/dns v1.1.22

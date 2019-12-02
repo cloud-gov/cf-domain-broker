@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"code.cloudfoundry.org/lager"
-	cf_domain_broker "github.com/18f/cf-domain-broker"
+	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/models"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/go-acme/lego/v3/acme"
@@ -104,6 +104,7 @@ type ObtainmentManager struct {
 	acmeConfig                    *lego.Config
 	core                          *api.Core
 	client                        *ACMEClient
+	restarted                     bool
 	db                            *gorm.DB
 	goodResolutionMap             map[string]int
 	logger                        lager.Logger
@@ -114,6 +115,7 @@ type ObtainmentManager struct {
 
 // Generate a new Obtainment Manager, a checkpointed way for obtaining certificates.
 // todo (mxplusb): make sure to deactivate all failed authorizations.
+// todo (mxplusb): implement restart logic for unsolved records.
 func NewObtainmentManager(settings *ObtainmentManagerSettings) (*ObtainmentManager, error) {
 
 	o := &ObtainmentManager{
@@ -309,7 +311,8 @@ func (o *ObtainmentManager) preCheck(domain, fqdn, value string, check dns01.Pre
 	})
 
 	switch {
-	case o.goodResolutionMap[fqdn] == cf_domain_broker.GoodResolutionCount: // we've waited awhile and all the records are resolving multiple times, so things are good.
+	// we've waited awhile and all the records are resolving multiple times, so things are good.
+	case o.goodResolutionMap[fqdn] == cfdomainbroker.GoodResolutionCount:
 		lsession.Info("stable-dns-resolution")
 		return true, nil
 	case goodResolvers < len(o.resolvers): // not everything is resolving properly.
@@ -321,6 +324,57 @@ func (o *ObtainmentManager) preCheck(domain, fqdn, value string, check dns01.Pre
 		return false, nil
 	default: // required by law
 		return false, nil
+	}
+}
+
+func (o *ObtainmentManager) continuityRunner() {
+	var rebootList []models.ProcInfo
+	var checkpoints []models.ObtainCheckpoint
+
+	// find the reboots, sort by ascending so we know the most recent one.
+	results := o.db.Order("start asc").Find(&rebootList)
+	if results.Error != nil {
+		o.logger.Error("db-query-no-reboots", results.Error)
+	}
+
+	// if there are no reboots, I guess we're okay?
+	if len(rebootList) == 0 {
+		o.logger.Info("db-no-known-reboots")
+		return
+	}
+
+	// find any unsolved challenges from before the reboot.
+	results = o.db.Where("last_updated < ?", rebootList[0]).Where("state < ?", PostSolve).Find(&checkpoints)
+	if results.RecordNotFound() {
+		o.logger.Info("db-no-pre-restart-records-found")
+		return
+	}
+	if results.Error != nil {
+		o.logger.Error("db-query-pre-restart-records", results.Error)
+		return
+	}
+
+	// for each challenge we need to solve, verify the state and then send it to the right place.
+	for idx := range checkpoints {
+		switch checkpoints[idx].State {
+		case ObtainState(PreOrder):
+			err := fmt.Errorf("service instance cannot be rehydrated, please recreate the service")
+			o.logger.Error("cannot-rehydrate-service-instance", err)
+			o.obtainErrors[checkpoints[idx].InstanceId] = err
+			return
+		// the certificate is on order, go get it's auth.
+		case ObtainState(Ordered):
+			o.RequestRouter <- GetCertificateForOrderRequest{InstanceId: checkpoints[idx].InstanceId}
+			return
+		// ready for it's first attempt at solving.
+		case ObtainState(Authorized):
+			o.RequestRouter <- SolveRequest{InstanceId: checkpoints[idx].InstanceId}
+			return
+		// started the solver last time, didn't finish.
+		case ObtainState(PreSolve):
+			o.RequestRouter <- SolveRequest{InstanceId: checkpoints[idx].InstanceId}
+			return
+		}
 	}
 }
 
@@ -450,11 +504,27 @@ func (o *ObtainmentManager) getAuthorizations(request AuthorizationRequest) {
 		}
 	}(o, request)
 
+	// this most likely means the request came in after a reboot, so we need to rehydrate state
+	if request.Order.Authorizations == nil {
+		results := o.db.Where("instance_id = ?", request.InstanceId).Find(&request.Order)
+		if results.Error != nil {
+			if results.RecordNotFound() {
+				o.obtainErrors[request.InstanceId] = results.Error
+				o.logger.Error("db-authorization-not-found", results.Error)
+				return
+			}
+			o.obtainErrors[request.InstanceId] = results.Error
+			o.logger.Error("db-authorization-query-error", results.Error)
+			return
+		}
+	}
+
 	for idx := range request.Order.Authorizations {
 		o.limiter.Take()
 		go func(authzUrl string) {
 			authz, err := o.core.Authorizations.Get(authzUrl)
 			if err != nil {
+				// parts of this section can be nil
 				//noinspection ALL
 				errc <- authError{
 					Domain: authz.Identifier.Value,
@@ -781,7 +851,7 @@ func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrde
 	}
 }
 
-// Check with the ACME server to ensure the
+// Check with the ACME server to ensure the thing?
 type CheckACMEResponseRequest struct {
 	Order      acme.Order
 	Bundle     bool

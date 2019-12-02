@@ -39,7 +39,7 @@ func main() {
 }
 
 func run() {
-	domainBroker := initBrokerConfig()
+	domainBroker, db := initBrokerConfig()
 	brokerCapiCredentials := brokerapi.BrokerCredentials{
 		Username: settings.RuntimeSettings.BrokerUsername,
 		Password: settings.RuntimeSettings.BrokerPassword,
@@ -63,12 +63,31 @@ func run() {
 		}
 	}()
 
+	// everything is initialised, mark the start time.
+	startTime := time.Now()
+	if err := db.Create(models.ProcInfo{Start: startTime}).Error; err != nil {
+		panic(fmt.Errorf("cannot save start time, %s", err))
+	}
+
 	// block forever
 	<-done
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
 	defer func() {
 		cancel()
 	}()
+
+	// we're stopping, so go ahead and mark that too.
+	var procInfo models.ProcInfo
+	result := db.Where("start = ?", startTime).Find(&procInfo)
+
+	// if we can't find the record, just create a new one, otherwise, try to update.
+	if result.RecordNotFound() {
+		db.Create(models.ProcInfo{Stop: time.Now()})
+	} else {
+		if err := db.Update(models.ProcInfo{Stop: time.Now()}).Error; err != nil {
+			panic(fmt.Errorf("cannot save stop time, %s", err))
+		}
+	}
 
 	if err := srv.Shutdown(ctx); err != nil {
 		settings.Logger.Fatal("server-not-stopping-cleanly", err)
@@ -77,7 +96,7 @@ func run() {
 }
 
 // todo (mxplusb): make this more cf friendly.
-func initBrokerConfig() *broker.DomainBroker {
+func initBrokerConfig() (*broker.DomainBroker, *gorm.DB) {
 	// before anything else, we need to grab our config so we know what to do.
 	var runtimeSettings types.RuntimeSettings
 	err := envconfig.Process("", &runtimeSettings)
@@ -102,11 +121,13 @@ func initBrokerConfig() *broker.DomainBroker {
 	if err != nil {
 		logger.Fatal("db-connection-builder", err)
 	}
+	// todo (mxplusb): this needs to go in the respective components.
 	if err := db.AutoMigrate(&models.DomainRoute{},
 		&models.UserData{},
 		&models.Domain{},
 		&models.Certificate{},
-		&managers.DomainMessenger{}).Error; err != nil {
+		&managers.DomainMessenger{},
+		&models.ProcInfo{}).Error; err != nil {
 		logger.Fatal("db-auto-migrate", err)
 	}
 
@@ -139,7 +160,10 @@ func initBrokerConfig() *broker.DomainBroker {
 		Logger:                      logger,
 	}
 
-	workerManager := managers.NewWorkerManager(workerManagerSettings)
+	workerManager, err := managers.NewWorkerManager(workerManagerSettings)
+	if err != nil {
+		panic(fmt.Errorf("cannot instantiate worker manager, %s", err))
+	}
 
 	domainBrokerSettings := &broker.DomainBrokerSettings{
 		Db:            db,
@@ -160,7 +184,7 @@ func initBrokerConfig() *broker.DomainBroker {
 		Resolvers:             runtimeSettings.Resolvers,
 	}
 
-	return broker.NewDomainBroker(domainBrokerSettings)
+	return broker.NewDomainBroker(domainBrokerSettings), db
 }
 
 func bindHTTPHandlers(handler http.Handler) http.Handler {
