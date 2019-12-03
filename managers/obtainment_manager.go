@@ -52,12 +52,14 @@ type ObtainmentResovler interface {
 
 type ElbRequest struct {
 	InstanceId string
+	Error      error
 	Response   chan ElbResponse
 }
 
 type ElbResponse struct {
 	InstanceId string
-	Elb        elbv2.LoadBalancer
+	Error      error
+	Elb        *elbv2.LoadBalancer
 }
 
 // This client is designed to be the same as go-acme/lego.Client, except the
@@ -78,9 +80,7 @@ type ObtainmentManagerSettings struct {
 	// Database connection we can use to store the checkpointed steps.
 	Db *gorm.DB
 	// A channel must be opened so the reference to an ELB can be sent.
-	ElbRequester chan ElbRequest
-	// Unique identifier for the service instance so we can store references to it.
-	InstanceId string
+	ElbRequest chan ElbRequest
 	// Logger to inherit.
 	Logger lager.Logger
 	// Used to sign the JSON Web Signature used by ACME.
@@ -88,6 +88,12 @@ type ObtainmentManagerSettings struct {
 	PrivateKey            crypto.PrivateKey
 	PersistentDnsProvider bool
 	Resolvers             map[string]string
+}
+
+// todo (mxplusb): ensure this gets assigned.
+type ObtainmentManagerState struct {
+	gorm.Model
+	AcmeUserInfo *models.UserData
 }
 
 type ObtainmentManager struct {
@@ -126,7 +132,7 @@ func NewObtainmentManager(settings *ObtainmentManagerSettings) (*ObtainmentManag
 		getCertificateForOrderRequest: make(chan GetCertificateForOrderRequest, 150),
 		checkACMEResponseRequest:      make(chan CheckACMEResponseRequest, 150),
 		certificateReadyRequest:       make(chan CertificateReadyRequest, 150),
-		elbRequest:                    settings.ElbRequester,
+		elbRequest:                    settings.ElbRequest,
 		obtainErrors:                  make(map[string]error),
 		acmeConfig:                    settings.ACMEConfig,
 		db:                            settings.Db,
@@ -146,7 +152,7 @@ func NewObtainmentManager(settings *ObtainmentManagerSettings) (*ObtainmentManag
 	}
 
 	// generate the DB models.
-	if err := o.db.AutoMigrate(&models.ObtainCheckpoint{}, &models.Certificate{}).Error; err != nil {
+	if err := o.db.AutoMigrate(&models.ObtainCheckpoint{}, &models.Certificate{}, &ObtainmentManagerState{}).Error; err != nil {
 		return &ObtainmentManager{}, err
 	}
 
@@ -191,6 +197,7 @@ func (o *ObtainmentManager) Run() {
 	o.getCertificateForOrderRunner()
 	o.checkResponseRunner()
 	o.certificateReadyRunner()
+	o.continuityRunner()
 }
 
 func (o *ObtainmentManager) newClient() error {
@@ -380,7 +387,7 @@ func (o *ObtainmentManager) continuityRunner() {
 
 type ObtainRequest struct {
 	certificate.ObtainRequest
-	InstanceId string
+	InstanceId           string
 }
 
 func (o *ObtainmentManager) obtainRunner() {
@@ -395,6 +402,11 @@ func (o *ObtainmentManager) obtainRunner() {
 func (o *ObtainmentManager) obtain(request ObtainRequest) {
 	if len(request.Domains) == 0 {
 		o.obtainErrors[request.InstanceId] = errors.New("domains are empty")
+	}
+
+	_, err := o.client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+	if err != nil {
+		o.obtainErrors[request.InstanceId] = err
 	}
 
 	// https://tools.ietf.org/html/draft-ietf-acme-acme-16#section-7.1.4

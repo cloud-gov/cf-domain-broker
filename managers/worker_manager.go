@@ -2,13 +2,10 @@ package managers
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"sync"
 	"syscall"
 	"time"
@@ -25,8 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/iam/iamiface"
 	"github.com/go-acme/lego/v3/certificate"
-	"github.com/go-acme/lego/v3/challenge"
-	"github.com/go-acme/lego/v3/lego"
 	"github.com/go-acme/lego/v3/registration"
 	"github.com/jinzhu/gorm"
 	"github.com/pivotal-cf/brokerapi/domain"
@@ -35,18 +30,13 @@ import (
 
 type WorkerManagerSettings struct {
 	AutoStartWorkerPool         bool
-	AcmeHttpClient              *http.Client
-	AcmeUrl                     string
-	AcmeEmail                   string
 	Db                          *gorm.DB
 	IamSvc                      iamiface.IAMAPI
 	CloudFront                  cloudfrontiface.CloudFrontAPI
 	ElbNames                    []*string
+	ElbRequest                  chan ElbRequest
 	ElbSvc                      elbv2iface.ELBV2API
 	ElbUpdateFrequencyInSeconds time.Duration
-	PersistentDnsProvider       bool
-	DnsChallengeProvider        challenge.Provider
-	Resolvers                   map[string]string
 	Logger                      lager.Logger
 	LogLevel                    int
 	ObtainmentManagerSettings   *ObtainmentManagerSettings
@@ -75,6 +65,7 @@ type WorkerManager struct {
 	deprovisioningErrorMap map[string]error
 	obtainmentManager      *ObtainmentManager
 	elbs                   []*elb
+	elbRequest             chan ElbRequest
 	logger                 lager.Logger
 	lock                   sync.RWMutex
 }
@@ -89,6 +80,7 @@ func NewWorkerManager(settings *WorkerManagerSettings) (*WorkerManager, error) {
 		RequestRouter:               make(chan interface{}, 150),
 		settings:                    settings,
 		logger:                      settings.Logger.Session("worker-manager"),
+		elbRequest:                  settings.ElbRequest,
 		provisioningErrorMap:        make(map[string]error),
 		deprovisioningErrorMap:      make(map[string]error),
 		provisionRequest:            make(chan ProvisionRequest, 150),
@@ -124,6 +116,7 @@ func NewWorkerManager(settings *WorkerManagerSettings) (*WorkerManager, error) {
 // Runs the worker pool. Can be automatically invoked via a setting with `NewWorkerManager`.
 // todo (mxplusb): leverage the runners to enable and disable SB functionality.
 // todo (mxplusb): figure out a `Stop()` story.
+// todo (mxplusb): figure out how to pass a context object all the way down.
 func (w *WorkerManager) Run() {
 	// start the background router.
 	go func() {
@@ -145,7 +138,7 @@ func (w *WorkerManager) Run() {
 	}()
 
 	// start our listeners/runners
-	go w.elbPopulator()
+	w.elbPopulator()
 	w.provisionRunner()
 	w.getInstanceRunner()
 	w.lastOperationRunner()
@@ -153,43 +146,87 @@ func (w *WorkerManager) Run() {
 	w.deprovisionRunner()
 }
 
+// background function to keep the internal elb certs on listener up to date.
+// runs every so often.
 func (w *WorkerManager) elbPopulator() {
-	ticker := time.NewTicker(w.settings.ElbUpdateFrequencyInSeconds * time.Second)
-
-	// background function to keep the internal elb certs on listener up to date.
-	// runs every so often.
-	for ; true; <-ticker.C {
-		// get a list of elbs.
-		resp, err := w.settings.ElbSvc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{
-			Names: w.settings.ElbNames,
-		})
-		if err != nil {
-			w.logger.Error("describe-load-balancers", err)
-		}
-		for idx := range resp.LoadBalancers {
-			// nil check because you have to every single time you do anything in aws...
-			if resp.LoadBalancers[idx] != nil {
-				lresp, err := w.settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
-					LoadBalancerArn: resp.LoadBalancers[idx].LoadBalancerArn,
-				})
-				if err != nil {
-					w.logger.Error("describe-elb-listeners", err, lager.Data{
-						"elb-target-arn": resp.LoadBalancers[idx].LoadBalancerArn,
+	go func() {
+		ticker := time.NewTicker(w.settings.ElbUpdateFrequencyInSeconds * time.Second)
+		for ; true; <-ticker.C {
+			// get a list of elbs.
+			resp, err := w.settings.ElbSvc.DescribeLoadBalancers(&elbv2.DescribeLoadBalancersInput{
+				Names: w.settings.ElbNames,
+			})
+			if err != nil {
+				w.logger.Error("describe-load-balancers", err)
+			}
+			for idx := range resp.LoadBalancers {
+				// nil check because you have to every single time you do anything in aws...
+				if resp.LoadBalancers[idx] != nil {
+					lresp, err := w.settings.ElbSvc.DescribeListeners(&elbv2.DescribeListenersInput{
+						LoadBalancerArn: resp.LoadBalancers[idx].LoadBalancerArn,
 					})
-				}
-
-				var certsOnListener int
-				for nidx := range lresp.Listeners {
-					if lresp.Listeners[nidx] != nil {
-						certsOnListener += len(lresp.Listeners[nidx].Certificates)
+					if err != nil {
+						w.logger.Error("describe-elb-listeners", err, lager.Data{
+							"elb-target-arn": resp.LoadBalancers[idx].LoadBalancerArn,
+						})
 					}
-				}
 
-				w.lock.Lock()
-				w.elbs = append(w.elbs, &elb{lb: resp.LoadBalancers[idx], certsOnListener: certsOnListener})
-				w.lock.Unlock()
+					var certsOnListener int
+					for nidx := range lresp.Listeners {
+						if lresp.Listeners[nidx] != nil {
+							certsOnListener += len(lresp.Listeners[nidx].Certificates)
+						}
+					}
+
+					w.lock.Lock()
+					w.elbs = append(w.elbs, &elb{lb: resp.LoadBalancers[idx], certsOnListener: certsOnListener})
+					w.lock.Unlock()
+				}
 			}
 		}
+	}()
+}
+
+func (w *WorkerManager) elbRunner() {
+	go func() {
+		for {
+			msg := <-w.elbRequest
+			go w.elbFinder(msg)
+		}
+	}()
+}
+
+func (w *WorkerManager) elbFinder(request ElbRequest) {
+	// find the least assigned ELB to assign the route to.
+	var targetElb *elbv2.LoadBalancer
+	leastAssigned := 0
+	for idx := range w.elbs {
+		if w.elbs[idx].certsOnListener >= leastAssigned {
+			targetElb = w.elbs[idx].lb
+			leastAssigned = w.elbs[idx].certsOnListener
+		}
+	}
+
+	if targetElb == nil {
+		err := errors.New("nil pointer dereference")
+		w.logger.Error("desired-lb-nil-reference", err)
+		w.provisioningErrorMap[request.InstanceId] = err
+		request.Response <- ElbResponse{
+			InstanceId: request.InstanceId,
+			Error:      err,
+		}
+		return
+	}
+
+
+	w.logger.Info("least-assigned-found", lager.Data{
+		"elb-target": &targetElb.LoadBalancerArn,
+	})
+
+	request.Response <- ElbResponse{
+		InstanceId: request.InstanceId,
+		Error:      nil,
+		Elb:        targetElb,
 	}
 }
 
@@ -216,87 +253,14 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 		"domains":     msg.DomainOpts.Domains,
 	})
 
-	// generate a new key.
-	key, err := rsa.GenerateKey(rand.Reader, 4096)
-	if err != nil {
-		lsession.Error("rsa-generate-key", err)
-		w.provisioningErrorMap[msg.InstanceId] = err
-		return
-	}
-	lsession.Debug("rsa-key-generated")
-
-	// build the user with the new key, instantiate a client
-	user := models.UserData{
-		Email:      w.settings.AcmeEmail,
-		PublicKey:  key.Public(),
-		PrivateKey: key,
-	}
-
-	conf := lego.NewConfig(&user)
-	conf.CADirURL = w.settings.AcmeUrl
-
-	if w.settings.AcmeHttpClient == nil {
-		w.settings.AcmeHttpClient = http.DefaultClient
-	}
-
-	// find the least assigned ELB to assign the route to.
-	var targetElb *elbv2.LoadBalancer
-	leastAssigned := 0
-	for idx := range w.elbs {
-		if w.elbs[idx].certsOnListener >= leastAssigned {
-			targetElb = w.elbs[idx].lb
-			leastAssigned = w.elbs[idx].certsOnListener
-		}
-	}
-
-	if targetElb == nil {
-		lsession.Error("desired-lb-nil-reference", errors.New("nil pointer dereference"))
-		w.provisioningErrorMap[msg.InstanceId] = err
-		return
-	}
-
-	lsession.Info("least-assigned-found", lager.Data{
-		"elb-target": &targetElb.LoadBalancerArn,
-	})
-
-	// if we need to store the challenge for later upstream, create a new provider.
-	if w.settings.PersistentDnsProvider == true {
-		sbdnspSettings := &ServiceBrokerDnsProviderSettings{
-			Db:         w.settings.Db,
-			Logger:     w.logger,
-			InstanceId: msg.InstanceId,
-			LogLevel:   w.settings.LogLevel,
-			ELBTarget:  *(targetElb.DNSName),
-		}
-		w.settings.DnsChallengeProvider = NewServiceBrokerDNSProvider(sbdnspSettings)
-	}
-
-	acmeClient, err := NewAcmeClient(w.settings.AcmeHttpClient, w.settings.Resolvers, conf, w.settings.DnsChallengeProvider, w.logger, msg.InstanceId)
-	if err != nil {
-		lsession.Error("acme-new-client", err)
-		w.checkNetworkError(err)
-		w.provisioningErrorMap[msg.InstanceId] = err
-		return
-	}
-	lsession.Debug("acme-client-instantiated")
-
 	if len(msg.DomainOpts.Domains) > 0 {
 		lsession.Debug("acme-dns-provider-assigned")
 		// create the route struct and add the user reference.
 		localDomainRoute := &models.DomainRoute{
 			InstanceId:     msg.InstanceId,
 			State:          cfdomainbroker.Provisioning,
-			User:           user,
 			DomainExternal: msg.DomainOpts.Domains,
 		}
-
-		// register our user resource.
-		reg, err := acmeClient.Client.Registration.Register(registration.RegisterOptions{
-			TermsOfServiceAgreed: true,
-		})
-		user.Registration = reg
-		lsession.Debug("acme-user-registered")
-		w.checkNetworkError(err)
 
 		// store the certificate and elb info the database.
 		// check for debug.
@@ -320,11 +284,14 @@ func (w *WorkerManager) provision(msg ProvisionRequest) {
 			domains = append(domains, msg.DomainOpts.Domains[i].Value)
 		}
 
-		// make the certificate request.
-		request := certificate.ObtainRequest{
+		// as for the certificate.
+		w.obtainmentManager.RequestRouter <- certificate.ObtainRequest{
 			Domains: domains,
 			Bundle:  true,
 		}
+
+		// this point the provisioning is done, we just need to wait on the certificate.
+
 
 		// get the certificate.
 		cert, err := acmeClient.Client.Certificate.Obtain(request)
