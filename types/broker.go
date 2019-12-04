@@ -1,7 +1,6 @@
 package types
 
 import (
-	"github.com/18f/cf-domain-broker/models"
 	"github.com/jinzhu/gorm"
 )
 
@@ -16,7 +15,7 @@ type CdnPlanOptions struct {
 }
 
 type DomainPlanOptions struct {
-	Domains []models.Domain `json:"domains"`
+	Domains []Domain `json:"domains"`
 }
 
 type DomainString struct {
@@ -53,6 +52,12 @@ type RuntimeSettings struct {
 		4 = log.Fatal("Bye.")
 	*/
 	LogLevel int `envconfig:"log_level" default:"1"`
+}
+
+// Domain is an instance of a domain.
+type Domain struct {
+	gorm.Model
+	Value string
 }
 
 func NewSettings() (RuntimeSettings, error) {

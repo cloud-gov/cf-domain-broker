@@ -5,6 +5,7 @@
 package managers
 
 import (
+	"context"
 	"crypto"
 	"errors"
 	"fmt"
@@ -15,7 +16,6 @@ import (
 
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
-	"github.com/18f/cf-domain-broker/models"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/go-acme/lego/v3/acme"
 	"github.com/go-acme/lego/v3/acme/api"
@@ -31,26 +31,23 @@ import (
 	"golang.org/x/net/idna"
 )
 
-type ObtainState int
-
-const (
-	AcmeRateLimit             = 18
-	PreOrder      ObtainState = 1
-	Ordered
-	Authorized
-	PreSolve
-	PostSolve
-	Finalized
-	CertificateReady
-	Store = "store"
-	Load  = "load"
-)
-
 type ObtainmentResovler interface {
 	Solve(authorizations []acme.Authorization) error
 }
 
+// The checkpoint state of a provisioning certificate
+type ObtainCheckpoint struct {
+	gorm.Model
+	ObtainRequest  ObtainRequest
+	Order          acme.ExtendedOrder
+	State          State
+	Authorizations []acme.Authorization
+	CSR            []byte
+	InstanceId     string `gorm:"primary_key"`
+}
+
 type ElbRequest struct {
+	Context    context.Context
 	InstanceId string
 	Error      error
 	Response   chan ElbResponse
@@ -58,6 +55,7 @@ type ElbRequest struct {
 
 type ElbResponse struct {
 	InstanceId string
+	Ok         bool
 	Error      error
 	Elb        *elbv2.LoadBalancer
 }
@@ -93,7 +91,7 @@ type ObtainmentManagerSettings struct {
 // todo (mxplusb): ensure this gets assigned.
 type ObtainmentManagerState struct {
 	gorm.Model
-	AcmeUserInfo *models.UserData
+	AcmeUserInfo *UserData
 }
 
 type ObtainmentManager struct {
@@ -112,6 +110,7 @@ type ObtainmentManager struct {
 	client                        *ACMEClient
 	restarted                     bool
 	db                            *gorm.DB
+	globalQueueManagerChan        chan ManagerRequest
 	goodResolutionMap             map[string]int
 	logger                        lager.Logger
 	limiter                       ratelimit.Limiter
@@ -152,7 +151,7 @@ func NewObtainmentManager(settings *ObtainmentManagerSettings) (*ObtainmentManag
 	}
 
 	// generate the DB models.
-	if err := o.db.AutoMigrate(&models.ObtainCheckpoint{}, &models.Certificate{}, &ObtainmentManagerState{}).Error; err != nil {
+	if err := o.db.AutoMigrate(&ObtainCheckpoint{}, &Certificate{}, &ObtainmentManagerState{}).Error; err != nil {
 		return &ObtainmentManager{}, err
 	}
 
@@ -334,9 +333,10 @@ func (o *ObtainmentManager) preCheck(domain, fqdn, value string, check dns01.Pre
 	}
 }
 
+// This runs once on startup to see if there are any leftover records which need to resolve.
 func (o *ObtainmentManager) continuityRunner() {
-	var rebootList []models.ProcInfo
-	var checkpoints []models.ObtainCheckpoint
+	var rebootList []ProcInfo
+	var checkpoints []ObtainCheckpoint
 
 	// find the reboots, sort by ascending so we know the most recent one.
 	results := o.db.Order("start asc").Find(&rebootList)
@@ -362,23 +362,24 @@ func (o *ObtainmentManager) continuityRunner() {
 	}
 
 	// for each challenge we need to solve, verify the state and then send it to the right place.
+	// todo (mxplusb): this needs to be fixed.
 	for idx := range checkpoints {
 		switch checkpoints[idx].State {
-		case ObtainState(PreOrder):
+		case State(PreOrder):
 			err := fmt.Errorf("service instance cannot be rehydrated, please recreate the service")
 			o.logger.Error("cannot-rehydrate-service-instance", err)
 			o.obtainErrors[checkpoints[idx].InstanceId] = err
 			return
 		// the certificate is on order, go get it's auth.
-		case ObtainState(Ordered):
+		case State(Ordered):
 			o.RequestRouter <- GetCertificateForOrderRequest{InstanceId: checkpoints[idx].InstanceId}
 			return
 		// ready for it's first attempt at solving.
-		case ObtainState(Authorized):
+		case State(Authorized):
 			o.RequestRouter <- SolveRequest{InstanceId: checkpoints[idx].InstanceId}
 			return
 		// started the solver last time, didn't finish.
-		case ObtainState(PreSolve):
+		case State(PreSolve):
 			o.RequestRouter <- SolveRequest{InstanceId: checkpoints[idx].InstanceId}
 			return
 		}
@@ -387,7 +388,8 @@ func (o *ObtainmentManager) continuityRunner() {
 
 type ObtainRequest struct {
 	certificate.ObtainRequest
-	InstanceId           string
+	Context    context.Context
+	InstanceId string
 }
 
 func (o *ObtainmentManager) obtainRunner() {
@@ -436,7 +438,7 @@ func (o *ObtainmentManager) obtain(request ObtainRequest) {
 	}
 
 	// make our first checkpoint.
-	obtainRequestCheckpoint := models.ObtainCheckpoint{
+	obtainRequestCheckpoint := ObtainCheckpoint{
 		ObtainRequest: request,
 		State:         PreOrder,
 		InstanceId:    request.InstanceId,
@@ -461,7 +463,7 @@ func (o *ObtainmentManager) obtain(request ObtainRequest) {
 	}
 
 	// make our second checkpoint.
-	orderCheckpoint := models.ObtainCheckpoint{
+	orderCheckpoint := ObtainCheckpoint{
 		Order:      order,
 		InstanceId: request.InstanceId,
 		State:      Ordered,
@@ -483,6 +485,7 @@ func (o *ObtainmentManager) obtain(request ObtainRequest) {
 }
 
 type AuthorizationRequest struct {
+	Context    context.Context
 	Order      acme.ExtendedOrder
 	InstanceId string
 }
@@ -570,7 +573,7 @@ func (o *ObtainmentManager) getAuthorizations(request AuthorizationRequest) {
 	// being a transaction
 	tx := o.db.Begin()
 
-	var obtainCheckpoint models.ObtainCheckpoint
+	var obtainCheckpoint ObtainCheckpoint
 	result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
 	if result.RecordNotFound() {
 		err := errors.New("cannot find existing checkpoint")
@@ -603,6 +606,7 @@ func (o *ObtainmentManager) getAuthorizations(request AuthorizationRequest) {
 
 // Try and solve an ACME challenge.
 type SolveRequest struct {
+	Context    context.Context
 	InstanceId string
 }
 
@@ -617,10 +621,15 @@ func (o *ObtainmentManager) solveRunner() {
 
 // this is our fundamentally blocking section.
 func (o *ObtainmentManager) solve(request SolveRequest) {
+
+	lsession := o.logger.Session("solve", lager.Data{
+		"instance-id": request.InstanceId,
+	})
+
 	// begin our transaction
 	tx := o.db.Begin()
 
-	var obtainCheckpoint models.ObtainCheckpoint
+	var obtainCheckpoint ObtainCheckpoint
 	result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
 	if result.RecordNotFound() {
 		err := errors.New("cannot find existing checkpoint")
@@ -655,10 +664,15 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 
 	if o.settings.PersistentDnsProvider == true {
 		respc := make(chan ElbResponse, 1)
-		o.elbRequest <- ElbRequest{
+		o.globalQueueManagerChan <- ManagerRequest{
 			InstanceId: request.InstanceId,
-			Response:   respc,
+			Type:       WorkerManagerType,
+			Payload: ElbRequest{
+				InstanceId: request.InstanceId,
+				Response:   respc,
+			},
 		}
+
 		resp := <-respc
 		sbdnspSettings := &ServiceBrokerDnsProviderSettings{
 			Db:         o.settings.Db,
@@ -666,6 +680,46 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 			InstanceId: request.InstanceId,
 			ELBTarget:  *(resp.Elb.DNSName),
 		}
+
+		// we store the elb reference here and now so it can be referenced at upload time, after the certificate has
+		// been created. we have to do this now instead of after the certificate was provisioned because we need to give
+		// customers the target CNAME value.
+		var localDomainRoute DomainRouteModel
+		results := o.db.Where("instance_id = ?", request.InstanceId).Find(&localDomainRoute)
+		if results.Error != nil {
+			lsession.Error("cannot-find-domain-route-reference", results.Error)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: PreSolve,
+					DesiredState: Error,
+					ErrorMessage: results.Error.Error(),
+					Response:     nil,
+				},
+			}
+			return
+		}
+
+		localDomainRoute.ElbArn = *(resp.Elb.LoadBalancerArn)
+		results = o.db.Update(localDomainRoute)
+		if results.Error != nil {
+			lsession.Error("cannot-update-domain-route-reference", results.Error)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: PreSolve,
+					DesiredState: Error,
+					ErrorMessage: results.Error.Error(),
+					Response:     nil,
+				},
+			}
+			return
+		}
+
 		if err := o.client.Challenge.SetDNS01Provider(NewServiceBrokerDNSProvider(sbdnspSettings), dns01.AddRecursiveNameservers(nameservers), dns01.WrapPreCheck(o.preCheck)); err != nil {
 			o.obtainErrors[request.InstanceId] = err
 			o.logger.Error("acme-client-set-dns-provider", err)
@@ -741,7 +795,7 @@ func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrde
 
 	tx := o.db.Begin()
 
-	var obtainCheckpoint models.ObtainCheckpoint
+	var obtainCheckpoint ObtainCheckpoint
 	result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
 	if result.RecordNotFound() {
 		err := errors.New("cannot find existing checkpoint")
@@ -760,7 +814,7 @@ func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrde
 	// todo (mxplusb): figure out how to document this.
 	commonName := request.Domains[0]
 
-	// ACME draft Section 7.4 "Applying for Certificate Issuance"
+	// ACME draft Section 7.4 "Applying for CertificateResource Issuance"
 	// https://tools.ietf.org/html/draft-ietf-acme-acme-12#section-7.4
 	// says:
 	//   Clients SHOULD NOT make any assumptions about the sort order of
@@ -939,8 +993,9 @@ func (o *ObtainmentManager) checkOrderStatus(order acme.Order) (bool, error) {
 }
 
 type CertificateReadyRequest struct {
+	Context             context.Context
 	CertificateResource *certificate.Resource
-	Op                  string
+	Op                  Op
 	InstanceId          string
 	Response            chan CertificateReadyResponse
 }
@@ -994,7 +1049,7 @@ func (o *ObtainmentManager) certificateReady(request CertificateReadyRequest) {
 		}
 	case Store:
 		tx := o.db.Begin()
-		var obtainCheckpoint models.ObtainCheckpoint
+		var obtainCheckpoint ObtainCheckpoint
 		result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
 		if result.RecordNotFound() {
 			err := errors.New("cannot find existing checkpoint")
@@ -1008,7 +1063,7 @@ func (o *ObtainmentManager) certificateReady(request CertificateReadyRequest) {
 			tx.Rollback()
 			return
 		}
-		localCert := models.Certificate{
+		localCert := Certificate{
 			InstanceId: request.InstanceId,
 			Resource:   request.CertificateResource,
 		}

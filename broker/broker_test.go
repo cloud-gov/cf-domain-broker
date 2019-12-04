@@ -14,7 +14,6 @@ import (
 	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/fakes"
 	"github.com/18f/cf-domain-broker/managers"
-	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/18f/gravel"
 	"github.com/18f/gravel/dns"
@@ -59,10 +58,10 @@ func (s *BrokerSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	// migrate our Db to set up the schema.
-	if err := s.Db.AutoMigrate(&models.DomainRoute{},
-		&models.UserData{},
-		&models.Domain{},
-		&models.Certificate{},
+	if err := s.Db.AutoMigrate(&managers.DomainRouteModel{},
+		&managers.UserData{},
+		&managers.Domain{},
+		&managers.Certificate{},
 		&managers.DomainMessenger{}).Error; err != nil {
 		s.Require().NoError(err)
 	}
@@ -132,7 +131,7 @@ func (s *BrokerSuite) SetupTest() {
 		return
 	}
 	// build the user with the new key, instantiate a client
-	user := models.UserData{
+	user := managers.UserData{
 		Email:      s.RuntimeSettings.Email,
 		PublicKey:  key.Public(),
 		PrivateKey: key,
@@ -231,7 +230,7 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 	// sleep a bit to let the workers do their thing.
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
-	var verifyRoute models.DomainRoute
+	var verifyRoute managers.DomainRouteModel
 	if err := s.Db.Where("instance_id = ?", serviceInstanceId).Find(&verifyRoute).Error; err != nil {
 		s.Require().NoError(err, "there should be no error querying for the domain route")
 	}
@@ -240,7 +239,7 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
-	localCert := &models.Certificate{}
+	localCert := &managers.Certificate{}
 	if err := s.Db.Where("instance_id = ?", serviceInstanceId).First(&localCert).Error; err != nil {
 		s.Require().NoError(err, "there should be no error when searching for the related certificate in the database")
 	}
@@ -307,7 +306,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
-	localCert := models.Certificate{
+	localCert := managers.Certificate{
 		InstanceId: serviceInstanceId,
 	}
 	if err := s.Db.Where("instance_id = ?", localCert.InstanceId).Find(&localCert).Error; err != nil {
@@ -340,14 +339,14 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleSAN() 
 	// sleep a bit to let the workers do their thing.
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
-	var verifyRoute models.DomainRoute
+	var verifyRoute managers.DomainRouteModel
 	if err := s.Db.Where("instance_id = ?", serviceInstanceId).First(&verifyRoute).Error; err != nil {
 		s.Require().NoError(err, "there should be no error querying for the domain route")
 	}
 
 	s.Require().NotNil(verifyRoute, "the route must not be empty")
 
-	localCert := &models.Certificate{}
+	localCert := &managers.Certificate{}
 	if err := s.Db.Where("instance_id = ?", serviceInstanceId).First(&localCert).Error; err != nil {
 		s.Require().NoError(err, "there should be no error when searching for the related certificate in the database")
 	}
@@ -411,7 +410,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
-	localCert := models.Certificate{
+	localCert := managers.Certificate{
 		InstanceId: serviceInstanceId,
 	}
 	if err := s.Db.Where("instance_id = ?", localCert.InstanceId).Find(&localCert).Error; err != nil {
@@ -454,7 +453,7 @@ func (s *BrokerSuite) TestDomainBroker_Deprovision() {
 	s.awaiter(serviceInstanceId, "there should be no deprovisioning errors", false)
 
 	// verify the route does not exist in the db.
-	localRoute := models.DomainRoute{
+	localRoute := managers.DomainRouteModel{
 		InstanceId: serviceInstanceId,
 	}
 	dbResp := s.Db.Where("instance_id = ?", &localRoute.InstanceId).Find(&localRoute)
@@ -495,7 +494,7 @@ func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
 	time.Sleep(time.Second * 5)
 
 	// verify the route does not exist in the db.
-	localRoute := models.DomainRoute{
+	localRoute := managers.DomainRouteModel{
 		InstanceId: serviceInstanceId,
 	}
 	dbResp := s.Db.Where("instance_id = ?", &localRoute.InstanceId).Find(&localRoute)

@@ -8,7 +8,7 @@ const (
 
 	// todo (mxplusb): update this.
 	DomainServiceDescription                 = "Create a custom TLS certificate for your application."
-	DomainServiceMetadataDisplayName         = "Custom TLS Certificate"
+	DomainServiceMetadataDisplayName         = "Custom TLS CertificateResource"
 	DomainServiceMetadataLongDescription     = "Create a custom TLS certificate for your application. This will provision a TLS certificate from Let's Encrypt, a free certificate provider."
 	DomainServiceMetadataDocumentationUrl    = "https://github.com/18f/cf-domain-broker/tree/master/README.md"
 	DomainServiceMetadataSupportUrl          = "https://cloud.gov/support"
@@ -25,11 +25,6 @@ const (
 
 	DomainCreateTimeout = time.Hour * 24
 	DomainCreateCheck   = time.Second * 10
-
-	Provisioning   State = 0
-	Provisioned    State = 1
-	Deprovisioning State = 2
-	Deprovisioned  State = 3
 
 	GoodResolutionCount = 3
 )

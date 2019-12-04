@@ -9,7 +9,6 @@ import (
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/managers"
-	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/jinzhu/gorm"
 	"github.com/pivotal-cf/brokerapi/domain"
@@ -150,9 +149,9 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 			lsession.Error("unmarshal-domain-opts", err)
 			return spec, err
 		}
-		var domainModels []models.Domain
+		var domainModels []types.Domain
 		for _, domain := range domainstring.Domains {
-			var domainModel models.Domain
+			var domainModel types.Domain
 			domainModel.Value = domain
 			domainModels = append(domainModels, domainModel)
 		}

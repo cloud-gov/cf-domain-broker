@@ -11,7 +11,6 @@ import (
 
 	"github.com/18f/cf-domain-broker/broker"
 	"github.com/18f/cf-domain-broker/managers"
-	"github.com/18f/cf-domain-broker/models"
 	"github.com/18f/cf-domain-broker/types"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/service/cloudfront"
@@ -65,7 +64,7 @@ func run() {
 
 	// everything is initialised, mark the start time.
 	startTime := time.Now()
-	if err := db.Create(models.ProcInfo{Start: startTime}).Error; err != nil {
+	if err := db.Create(managers.ProcInfo{Start: startTime}).Error; err != nil {
 		panic(fmt.Errorf("cannot save start time, %s", err))
 	}
 
@@ -77,14 +76,14 @@ func run() {
 	}()
 
 	// we're stopping, so go ahead and mark that too.
-	var procInfo models.ProcInfo
+	var procInfo managers.ProcInfo
 	result := db.Where("start = ?", startTime).Find(&procInfo)
 
 	// if we can't find the record, just create a new one, otherwise, try to update.
 	if result.RecordNotFound() {
-		db.Create(models.ProcInfo{Stop: time.Now()})
+		db.Create(managers.ProcInfo{Stop: time.Now()})
 	} else {
-		if err := db.Update(models.ProcInfo{Stop: time.Now()}).Error; err != nil {
+		if err := db.Update(managers.ProcInfo{Stop: time.Now()}).Error; err != nil {
 			panic(fmt.Errorf("cannot save stop time, %s", err))
 		}
 	}
@@ -122,12 +121,12 @@ func initBrokerConfig() (*broker.DomainBroker, *gorm.DB) {
 		logger.Fatal("db-connection-builder", err)
 	}
 	// todo (mxplusb): this needs to go in the respective components.
-	if err := db.AutoMigrate(&models.DomainRoute{},
-		&models.UserData{},
-		&models.Domain{},
-		&models.Certificate{},
+	if err := db.AutoMigrate(&managers.DomainRouteModel{},
+		&managers.UserData{},
+		&types.Domain{},
+		&managers.Certificate{},
 		&managers.DomainMessenger{},
-		&models.ProcInfo{}).Error; err != nil {
+		&managers.ProcInfo{}).Error; err != nil {
 		logger.Fatal("db-auto-migrate", err)
 	}
 
@@ -144,18 +143,18 @@ func initBrokerConfig() (*broker.DomainBroker, *gorm.DB) {
 
 	workerManagerSettings := &managers.WorkerManagerSettings{
 		AutoStartWorkerPool:         true,
-		AcmeHttpClient:              http.DefaultClient,
-		AcmeUrl:                     runtimeSettings.AcmeUrl,
-		AcmeEmail:                   runtimeSettings.Email,
+		//AcmeHttpClient:              http.DefaultClient,
+		//AcmeUrl:                     runtimeSettings.AcmeUrl,
+		//AcmeEmail:                   runtimeSettings.Email,
 		Db:                          db,
 		IamSvc:                      iam.New(sess),
 		CloudFront:                  cloudfront.New(sess),
 		ElbNames:                    albNames,
 		ElbSvc:                      elbv2.New(sess),
 		ElbUpdateFrequencyInSeconds: 15,
-		PersistentDnsProvider:       true,
-		DnsChallengeProvider:        nil,
-		Resolvers:                   runtimeSettings.Resolvers,
+		//PersistentDnsProvider:       true,
+		//DnsChallengeProvider:        nil,
+		//Resolvers:                   runtimeSettings.Resolvers,
 		LogLevel:                    runtimeSettings.LogLevel,
 		Logger:                      logger,
 	}
