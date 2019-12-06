@@ -42,7 +42,7 @@ certbot \
   --agree-tos --eff-email \
   --domain $domain \
   --config-dir $base_directory/$domain/config \
-  --logs-dir $base_directory/l$domain/ogs \
+  --logs-dir $base_directory/$domain/logs \
   --work-dir $base_directory/$domain/work \
   --manual --preferred-challenges dns-01 certonly
 
