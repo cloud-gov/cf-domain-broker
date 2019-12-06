@@ -50,7 +50,7 @@ Run the `create-distribution.sh` script with the above inputs.  The script will 
 
 - Set up the correct directories for each domain in `$base-directory`.
 - Run certbot
-- Generate a *.tfvars file in `$base-directory/$domain`
+- Generate a `*.tfvars` file in `$base-directory/$domain`
 - Run terraform apply
 
 ### Accepting Terms
