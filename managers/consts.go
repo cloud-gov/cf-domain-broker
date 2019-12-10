@@ -6,21 +6,21 @@ type State float64
 const (
 	Unknown                State = -2
 	Error                  State = -1
-	New                    State = 0
-	Provisioning           State = 1
-	PreOrder               State = 1.1
-	Ordered                State = 1.2
-	Authorized             State = 1.3
-	PreSolve               State = 1.4
-	PostSolve              State = 1.5
-	Finalized              State = 1.6
-	CertificateReady       State = 1.7
-	IamCertificateUploaded State = 1.8
-	ElbAssigned            State = 1.9
-	Provisioned            State = 2
+	New                    State = 1 // starts at 1 because 0 is considered null.
+	Provisioning           State = 2
+	PreOrder               State = 2.1
+	Ordered                State = 2.2
+	Authorized             State = 2.3
+	PreSolve               State = 2.4
+	PostSolve              State = 2.5
+	Finalized              State = 2.6
+	CertificateReady       State = 2.7
+	IamCertificateUploaded State = 2.8
+	ElbAssigned            State = 2.9
+	Provisioned            State = 3
 	// todo (mxplusb): there should be more states than this but I don't know what they would be just yet.
-	Deprovisioning State = 3
-	Deprovisioned  State = 4
+	Deprovisioning State = 4
+	Deprovisioned  State = 5
 )
 
 // Load and Store things!
@@ -41,4 +41,8 @@ const (
 
 const (
 	AcmeRateLimit = 18
+)
+
+const (
+	errNotFound = "no rows in result set"
 )

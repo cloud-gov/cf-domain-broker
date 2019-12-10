@@ -10,13 +10,13 @@ require (
 	github.com/aws/aws-sdk-go v1.25.37
 	github.com/drewolson/testflight v1.0.0 // indirect
 	github.com/go-acme/lego/v3 v3.2.0
+	github.com/go-pg/pg/v9 v9.0.3
 	github.com/jinzhu/gorm v1.9.11
 	github.com/jinzhu/now v1.1.1 // indirect
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/lib/pq v1.2.0 // indirect
+	github.com/mattn/go-sqlite3 v1.11.0
 	github.com/miekg/dns v1.1.22
-	github.com/onsi/ginkgo v1.8.0 // indirect
-	github.com/onsi/gomega v1.5.0 // indirect
 	github.com/pborman/uuid v1.2.0
 	github.com/pivotal-cf/brokerapi v6.4.2+incompatible
 	github.com/stretchr/testify v1.4.0
