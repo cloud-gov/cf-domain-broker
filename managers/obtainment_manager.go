@@ -9,7 +9,6 @@ import (
 	"crypto"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -25,25 +24,177 @@ import (
 	"github.com/go-acme/lego/v3/challenge/resolver"
 	"github.com/go-acme/lego/v3/lego"
 	"github.com/go-acme/lego/v3/registration"
+	"github.com/go-pg/pg/v9"
+	"github.com/go-pg/pg/v9/orm"
 	"github.com/jinzhu/gorm"
 	"github.com/miekg/dns"
 	"go.uber.org/ratelimit"
 	"golang.org/x/net/idna"
 )
 
+// Configuration options for the Obtainment Manager.
+type ObtainmentManagerSettings struct {
+	// Automatically start all the runners.
+	Autostart bool
+	// ACME server.
+	ACMEConfig *lego.Config
+	// Database connection we can use to store the checkpointed steps.
+	Db *pg.DB
+	// A channel must be opened so the reference to an ELB can be sent.
+	ElbRequest chan ElbRequest
+	// Logger to inherit.
+	Logger lager.Logger
+	// Used to sign the JSON Web Signature used by ACME.
+	// See: https://medium.facilelogin.com/jwt-jws-and-jwe-for-not-so-dummies-b63310d201a3
+	PrivateKey            crypto.PrivateKey
+	PersistentDnsProvider bool
+	Resolvers             map[string]string
+}
+
+// todo (mxplusb): ensure this gets assigned.
+// todo (mxplusb): ensure this gets removed.
+type ObtainmentManagerState struct {
+	gorm.Model
+	AcmeUserInfo *UserData
+}
+
+type ObtainmentManager struct {
+	RequestRouter                 chan interface{}
+	Running                       bool
+	obtainRequest                 chan ObtainRequest
+	authRequest                   chan AuthorizationRequest
+	solveRequest                  chan SolveRequest
+	getCertificateForOrderRequest chan GetCertificateForOrderRequest
+	checkACMEResponseRequest      chan CheckACMEResponseRequest
+	certificateReadyRequest       chan CertificateReadyRequest
+	elbRequest                    chan ElbRequest
+	acmeConfig                    *lego.Config
+	core                          *api.Core
+	client                        *ACMEClient
+	restarted                     bool
+	db                            *pg.DB
+	globalQueueManagerChan        chan ManagerRequest
+	goodResolutionMap             map[string]int
+	logger                        lager.Logger
+	limiter                       ratelimit.Limiter
+	resolvers                     map[string]string
+	settings                      *ObtainmentManagerSettings
+}
+
+// Generate a new Obtainment Manager, a checkpointed way for obtaining certificates.
+// todo (mxplusb): make sure to deactivate all failed authorizations.
+// todo (mxplusb): implement restart logic for unsolved records.
+func NewObtainmentManager(settings *ObtainmentManagerSettings) (*ObtainmentManager, error) {
+
+	o := &ObtainmentManager{
+		RequestRouter:                 make(chan interface{}, 150),
+		obtainRequest:                 make(chan ObtainRequest, 150),
+		authRequest:                   make(chan AuthorizationRequest, 150),
+		solveRequest:                  make(chan SolveRequest, 150),
+		getCertificateForOrderRequest: make(chan GetCertificateForOrderRequest, 150),
+		checkACMEResponseRequest:      make(chan CheckACMEResponseRequest, 150),
+		certificateReadyRequest:       make(chan CertificateReadyRequest, 150),
+		elbRequest:                    settings.ElbRequest,
+		acmeConfig:                    settings.ACMEConfig,
+		db:                            settings.Db,
+		goodResolutionMap:             make(map[string]int),
+		logger:                        settings.Logger.Session("obtainment-manager"),
+		limiter:                       ratelimit.New(AcmeRateLimit, ratelimit.WithoutSlack),
+		resolvers:                     settings.Resolvers,
+		settings:                      settings,
+	}
+
+	// prep our acme client.
+	if o.acmeConfig == nil {
+		return &ObtainmentManager{}, errors.New("acme configuration cannot be nil")
+	}
+	if err := o.newClient(); err != nil {
+		return &ObtainmentManager{}, err
+	}
+
+	// generate the DB models.
+	tableOpts := &orm.CreateTableOptions{
+		Varchar:       4096,
+		Temp:          false,
+		IfNotExists:   true,
+		FKConstraints: false,
+	}
+
+	tableLiteral := []interface{}{
+		&ObtainCheckpointModel{},
+		&Certificate{},
+		&ObtainmentManagerState{},
+		&ProcInfo{},
+	}
+
+	for idx := range tableLiteral {
+		if err := o.db.CreateTable(tableLiteral[idx], tableOpts); err != nil {
+			return &ObtainmentManager{}, err
+		}
+	}
+
+	// autostart the things if needed!
+	if o.settings.Autostart {
+		o.Run()
+		o.Running = true
+		return o, nil
+	}
+	o.Running = false
+	return o, nil
+}
+
+// Runs the worker pool. Can be automatically invoked via a setting with `NewObtainmentManager`.
+// todo (mxplusb): figure out a `Stop()` story.
+// todo (mxplusb): figure out how to pass a context down
+func (o *ObtainmentManager) Run() {
+
+	o.logger.Debug("starting-request-router")
+
+	// start the background router.
+	go func() {
+		for {
+			msg := <-o.RequestRouter
+			switch msg.(type) {
+			case ObtainRequest:
+				o.obtainRequest <- msg.(ObtainRequest)
+			case AuthorizationRequest:
+				o.authRequest <- msg.(AuthorizationRequest)
+			case SolveRequest:
+				o.solveRequest <- msg.(SolveRequest)
+			case GetCertificateForOrderRequest:
+				o.getCertificateForOrderRequest <- msg.(GetCertificateForOrderRequest)
+			case CheckACMEResponseRequest:
+				o.checkACMEResponseRequest <- msg.(CheckACMEResponseRequest)
+			case CertificateReadyRequest:
+				o.certificateReadyRequest <- msg.(CertificateReadyRequest)
+			}
+		}
+	}()
+
+	o.logger.Debug("starting-runners")
+
+	// start our listeners/runners
+	o.obtainRunner()
+	o.authRunner()
+	o.solveRunner()
+	o.getCertificateForOrderRunner()
+	o.checkResponseRunner()
+	o.certificateReadyRunner()
+	o.continuityRunner()
+}
+
 type ObtainmentResovler interface {
 	Solve(authorizations []acme.Authorization) error
 }
 
 // The checkpoint state of a provisioning certificate
-type ObtainCheckpoint struct {
-	gorm.Model
+type ObtainCheckpointModel struct {
 	ObtainRequest  ObtainRequest
 	Order          acme.ExtendedOrder
 	State          State
 	Authorizations []acme.Authorization
 	CSR            []byte
-	InstanceId     string `gorm:"primary_key"`
+	InstanceId     string `pg:",pk"`
 }
 
 type ElbRequest struct {
@@ -69,159 +220,34 @@ type ACMEClient struct {
 	resolver     ObtainmentResovler
 }
 
-// Configuration options for the Obtainment Manager.
-type ObtainmentManagerSettings struct {
-	// Automatically start all the runners.
-	Autostart bool
-	// ACME server.
-	ACMEConfig *lego.Config
-	// Database connection we can use to store the checkpointed steps.
-	Db *gorm.DB
-	// A channel must be opened so the reference to an ELB can be sent.
-	ElbRequest chan ElbRequest
-	// Logger to inherit.
-	Logger lager.Logger
-	// Used to sign the JSON Web Signature used by ACME.
-	// See: https://medium.facilelogin.com/jwt-jws-and-jwe-for-not-so-dummies-b63310d201a3
-	PrivateKey            crypto.PrivateKey
-	PersistentDnsProvider bool
-	Resolvers             map[string]string
-}
-
-// todo (mxplusb): ensure this gets assigned.
-type ObtainmentManagerState struct {
-	gorm.Model
-	AcmeUserInfo *UserData
-}
-
-type ObtainmentManager struct {
-	RequestRouter                 chan interface{}
-	Running                       bool
-	obtainRequest                 chan ObtainRequest
-	authRequest                   chan AuthorizationRequest
-	solveRequest                  chan SolveRequest
-	getCertificateForOrderRequest chan GetCertificateForOrderRequest
-	checkACMEResponseRequest      chan CheckACMEResponseRequest
-	certificateReadyRequest       chan CertificateReadyRequest
-	elbRequest                    chan ElbRequest
-	obtainErrors                  map[string]error
-	acmeConfig                    *lego.Config
-	core                          *api.Core
-	client                        *ACMEClient
-	restarted                     bool
-	db                            *gorm.DB
-	globalQueueManagerChan        chan ManagerRequest
-	goodResolutionMap             map[string]int
-	logger                        lager.Logger
-	limiter                       ratelimit.Limiter
-	resolvers                     map[string]string
-	settings                      *ObtainmentManagerSettings
-}
-
-// Generate a new Obtainment Manager, a checkpointed way for obtaining certificates.
-// todo (mxplusb): make sure to deactivate all failed authorizations.
-// todo (mxplusb): implement restart logic for unsolved records.
-func NewObtainmentManager(settings *ObtainmentManagerSettings) (*ObtainmentManager, error) {
-
-	o := &ObtainmentManager{
-		RequestRouter:                 make(chan interface{}, 150),
-		obtainRequest:                 make(chan ObtainRequest, 150),
-		authRequest:                   make(chan AuthorizationRequest, 150),
-		solveRequest:                  make(chan SolveRequest, 150),
-		getCertificateForOrderRequest: make(chan GetCertificateForOrderRequest, 150),
-		checkACMEResponseRequest:      make(chan CheckACMEResponseRequest, 150),
-		certificateReadyRequest:       make(chan CertificateReadyRequest, 150),
-		elbRequest:                    settings.ElbRequest,
-		obtainErrors:                  make(map[string]error),
-		acmeConfig:                    settings.ACMEConfig,
-		db:                            settings.Db,
-		goodResolutionMap:             make(map[string]int),
-		logger:                        settings.Logger.Session("obtainment-manager"),
-		limiter:                       ratelimit.New(AcmeRateLimit, ratelimit.WithoutSlack),
-		resolvers:                     settings.Resolvers,
-		settings:                      settings,
-	}
-
-	// prep our acme client.
-	if o.acmeConfig == nil {
-		return &ObtainmentManager{}, errors.New("acme configuration cannot be nil")
-	}
-	if err := o.newClient(); err != nil {
-		return &ObtainmentManager{}, err
-	}
-
-	// generate the DB models.
-	if err := o.db.AutoMigrate(&ObtainCheckpoint{}, &Certificate{}, &ObtainmentManagerState{}).Error; err != nil {
-		return &ObtainmentManager{}, err
-	}
-
-	if o.settings.Autostart {
-		o.Run()
-		o.Running = true
-		return o, nil
-	}
-	o.Running = false
-	return o, nil
-}
-
-// Runs the worker pool. Can be automatically invoked via a setting with `NewObtainmentManager`.
-// todo (mxplusb): figure out a `Stop()` story.
-// todo (mxplusb): figure out how to pass a context down
-func (o *ObtainmentManager) Run() {
-	// start the background router.
-	go func() {
-		for {
-			msg := <-o.RequestRouter
-			switch msg.(type) {
-			case ObtainRequest:
-				o.obtainRequest <- msg.(ObtainRequest)
-			case AuthorizationRequest:
-				o.authRequest <- msg.(AuthorizationRequest)
-			case SolveRequest:
-				o.solveRequest <- msg.(SolveRequest)
-			case GetCertificateForOrderRequest:
-				o.getCertificateForOrderRequest <- msg.(GetCertificateForOrderRequest)
-			case CheckACMEResponseRequest:
-				o.checkACMEResponseRequest <- msg.(CheckACMEResponseRequest)
-			case CertificateReadyRequest:
-				o.certificateReadyRequest <- msg.(CertificateReadyRequest)
-			}
-		}
-	}()
-
-	// start our listeners/runners
-	o.obtainRunner()
-	o.authRunner()
-	o.solveRunner()
-	o.getCertificateForOrderRunner()
-	o.checkResponseRunner()
-	o.certificateReadyRunner()
-	o.continuityRunner()
-}
-
 func (o *ObtainmentManager) newClient() error {
+
+	lsession := o.logger.Session("new-acme-client-builder")
+
+	lsession.Debug("building-client")
+
 	if o.acmeConfig == nil {
 		err := errors.New("a configuration must be provided")
-		o.logger.Error("nil-client-configuration", err)
+		lsession.Error("nil-client-configuration", err)
 		return err
 	}
 
 	_, err := url.Parse(o.acmeConfig.CADirURL)
 	if err != nil {
-		o.logger.Error("acme-url-parse", err)
+		lsession.Error("acme-url-parse", err)
 		return err
 	}
 
 	if o.acmeConfig.HTTPClient == nil {
 		err := errors.New("the HTTP client cannot be nil")
-		o.logger.Error("nil-http-client", err)
+		lsession.Error("nil-http-client", err)
 		return err
 	}
 
 	privateKey := o.acmeConfig.User.GetPrivateKey()
 	if privateKey == nil {
 		err := errors.New("private key was nil")
-		o.logger.Error("nil-private-key", err)
+		lsession.Error("nil-private-key", err)
 		return err
 	}
 
@@ -231,25 +257,30 @@ func (o *ObtainmentManager) newClient() error {
 	}
 
 	// create our let's encrypt API client.
-	core, err := api.New(http.DefaultClient, "18f/domain-broker-v2", o.acmeConfig.CADirURL, kid, privateKey)
+	core, err := api.New(o.acmeConfig.HTTPClient, "18f/domain-broker-v2", o.acmeConfig.CADirURL, kid, privateKey)
 	if err != nil {
-		o.logger.Error("new-acme-api-failure", err)
+		lsession.Error("new-acme-api-failure", err)
 		return err
 	}
+	o.core = core
 
-	solversManager := resolver.NewSolversManager(core)
+	solversManager := resolver.NewSolversManager(o.core)
 	prober := resolver.NewProber(solversManager)
 
 	o.client = &ACMEClient{
 		Challenge:    solversManager,
-		Registration: registration.NewRegistrar(core, o.acmeConfig.User),
-		core:         core,
+		Registration: registration.NewRegistrar(o.core, o.acmeConfig.User),
+		core:         o.core,
 		resolver:     prober,
 	}
+
+	o.logger.Info("acme-client-built")
 
 	return nil
 }
 
+// ref: https://community.letsencrypt.org/t/le-staging-dns-servers/107282
+// re: why we check 3 times per configured provider for validation.
 func (o *ObtainmentManager) preCheck(domain, fqdn, value string, check dns01.PreCheckFunc) (b bool, e error) {
 	lsession := o.logger.Session("dns-pre-check", lager.Data{
 		"domain": domain,
@@ -335,13 +366,14 @@ func (o *ObtainmentManager) preCheck(domain, fqdn, value string, check dns01.Pre
 
 // This runs once on startup to see if there are any leftover records which need to resolve.
 func (o *ObtainmentManager) continuityRunner() {
-	var rebootList []ProcInfo
-	var checkpoints []ObtainCheckpoint
+	var rebootList []*ProcInfo
+	var checkpoints []*ObtainCheckpointModel
+
+	lsession := o.logger.Session("continuity-runner")
 
 	// find the reboots, sort by ascending so we know the most recent one.
-	results := o.db.Order("start asc").Find(&rebootList)
-	if results.Error != nil {
-		o.logger.Error("db-query-no-reboots", results.Error)
+	if err := o.db.Model(&rebootList).Order("start asc").Select(); err != nil {
+		lsession.Error("db-query-no-reboots", err)
 	}
 
 	// if there are no reboots, I guess we're okay?
@@ -351,24 +383,22 @@ func (o *ObtainmentManager) continuityRunner() {
 	}
 
 	// find any unsolved challenges from before the reboot.
-	results = o.db.Where("last_updated < ?", rebootList[0]).Where("state < ?", PostSolve).Find(&checkpoints)
-	if results.RecordNotFound() {
-		o.logger.Info("db-no-pre-restart-records-found")
-		return
-	}
-	if results.Error != nil {
-		o.logger.Error("db-query-pre-restart-records", results.Error)
+	if err := o.db.Model(&checkpoints).Where("last_updated < ?", rebootList[0]).Where("state < ?", PostSolve).Select(); err != nil {
+		if notFound(err) {
+			o.logger.Info("db-no-pre-restart-records-found")
+			return
+		}
+		lsession.Error("db-query-pre-restart-records", err)
 		return
 	}
 
 	// for each challenge we need to solve, verify the state and then send it to the right place.
-	// todo (mxplusb): this needs to be fixed.
+	// todo (mxplusb): this needs to be fixed with a real state machine.
 	for idx := range checkpoints {
 		switch checkpoints[idx].State {
 		case State(PreOrder):
 			err := fmt.Errorf("service instance cannot be rehydrated, please recreate the service")
-			o.logger.Error("cannot-rehydrate-service-instance", err)
-			o.obtainErrors[checkpoints[idx].InstanceId] = err
+			lsession.Error("cannot-rehydrate-service-instance", err)
 			return
 		// the certificate is on order, go get it's auth.
 		case State(Ordered):
@@ -386,10 +416,20 @@ func (o *ObtainmentManager) continuityRunner() {
 	}
 }
 
+// Request a certificate be obtained from ACME.
 type ObtainRequest struct {
 	certificate.ObtainRequest
 	Context    context.Context
 	InstanceId string
+	Response   chan ObtainResponse
+}
+
+// The response object.
+// todo (mxplusb): update with response object.
+type ObtainResponse struct {
+	InstanceId string
+	Error      error
+	Ok         bool
 }
 
 func (o *ObtainmentManager) obtainRunner() {
@@ -402,13 +442,50 @@ func (o *ObtainmentManager) obtainRunner() {
 }
 
 func (o *ObtainmentManager) obtain(request ObtainRequest) {
+	lsession := o.logger.Session("obtain", lager.Data{
+		"instance-id": request.InstanceId,
+	})
+
 	if len(request.Domains) == 0 {
-		o.obtainErrors[request.InstanceId] = errors.New("domains are empty")
+		err := errors.New("domains are empty")
+		lsession.Error("check-empty-domain-value", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				Context:      request.Context,
+				InstanceId:   request.InstanceId,
+				CurrentState: Provisioning,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 	}
 
 	_, err := o.client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
 	if err != nil {
-		o.obtainErrors[request.InstanceId] = err
+		lsession.Error("registration-failure", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				Context:      request.Context,
+				InstanceId:   request.InstanceId,
+				CurrentState: Provisioning,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		if request.Response != nil {
+			request.Response <- ObtainResponse{
+				Error:      err,
+				Ok:         false,
+				InstanceId: request.InstanceId,
+			}
+		}
+		return
 	}
 
 	// https://tools.ietf.org/html/draft-ietf-acme-acme-16#section-7.1.4
@@ -418,8 +495,26 @@ func (o *ObtainmentManager) obtain(request ObtainRequest) {
 		sanitizedDomain, err := idna.ToASCII(domain)
 		if err != nil {
 			lerr := fmt.Errorf("skip domain %q: unable to sanitize (punnycode): %v", domain, err)
-			o.logger.Error("cannot-sanitize-domain", lerr)
-			o.obtainErrors[request.InstanceId] = lerr
+			lsession.Error("sanitization-failure", lerr)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					Context:      request.Context,
+					InstanceId:   request.InstanceId,
+					CurrentState: Provisioning,
+					DesiredState: Error,
+					ErrorMessage: lerr.Error(),
+					Response:     nil,
+				},
+			}
+			if request.Response != nil {
+				request.Response <- ObtainResponse{
+					Error:      err,
+					Ok:         false,
+					InstanceId: request.InstanceId,
+				}
+			}
 			return
 		} else {
 			sanitizedDomains = append(sanitizedDomains, sanitizedDomain)
@@ -428,67 +523,154 @@ func (o *ObtainmentManager) obtain(request ObtainRequest) {
 	request.Domains = sanitizedDomains
 
 	if request.Bundle {
-		o.logger.Info("obtaining-bundled-san-certificate", lager.Data{
+		lsession.Info("obtaining-bundled-san-certificate", lager.Data{
 			"domains": strings.Join(sanitizedDomains, ","),
 		})
 	} else {
-		o.logger.Info("obtaining-san-certificate", lager.Data{
+		lsession.Info("obtaining-san-certificate", lager.Data{
 			"domains": strings.Join(sanitizedDomains, ","),
 		})
 	}
 
 	// make our first checkpoint.
-	obtainRequestCheckpoint := ObtainCheckpoint{
+	obtainRequestCheckpoint := ObtainCheckpointModel{
 		ObtainRequest: request,
 		State:         PreOrder,
 		InstanceId:    request.InstanceId,
 	}
 
 	// start a transaction
-	tx := o.db.Begin()
+	tx, err := o.db.Begin()
+	if err != nil {
+		lsession.Error("error-beginning-transaction", err)
+		if request.Response != nil {
+			request.Response <- ObtainResponse{
+				Error:      err,
+				Ok:         false,
+				InstanceId: request.InstanceId,
+			}
+		}
+		return
+	}
 
-	if err := tx.Create(&obtainRequestCheckpoint).Error; err != nil {
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("db-create-obtain-request-checkpoint", err)
+	if err := tx.Update(&obtainRequestCheckpoint); err != nil {
+		lsession.Error("create-obtain-request-checkpoint-failure", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				Context:      request.Context,
+				InstanceId:   request.InstanceId,
+				CurrentState: Provisioning,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		if request.Response != nil {
+			request.Response <- ObtainResponse{
+				Error:      err,
+				Ok:         false,
+				InstanceId: request.InstanceId,
+			}
+		}
 		tx.Rollback()
 		return
 	}
 
+	// request a state change.
+	o.globalQueueManagerChan <- ManagerRequest{
+		InstanceId: request.InstanceId,
+		Type:       StateManagerType,
+		Payload: StateTransitionRequest{
+			Context:      request.Context,
+			InstanceId:   request.InstanceId,
+			CurrentState: Provisioning,
+			DesiredState: PreOrder,
+			ErrorMessage: "",
+			Response:     nil,
+		},
+	}
+
 	order, err := o.core.Orders.New(request.Domains)
 	if err != nil {
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("new-order-error", err)
+		lsession.Error("new-order-error", err)
+
+		if request.Response != nil {
+			request.Response <- ObtainResponse{
+				Error:      err,
+				Ok:         false,
+				InstanceId: request.InstanceId,
+			}
+		}
+
 		tx.Rollback()
 		return
 	}
 
 	// make our second checkpoint.
-	orderCheckpoint := ObtainCheckpoint{
+	orderCheckpoint := ObtainCheckpointModel{
 		Order:      order,
 		InstanceId: request.InstanceId,
 		State:      Ordered,
 	}
-	if err := tx.Save(&orderCheckpoint).Error; err != nil {
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("db-update-order-checkpoint", err)
+	if err := tx.Update(&orderCheckpoint); err != nil {
+		lsession.Error("db-update-order-checkpoint", err)
+
+		if request.Response != nil {
+			request.Response <- ObtainResponse{
+				Error:      err,
+				Ok:         false,
+				InstanceId: request.InstanceId,
+			}
+		}
+
 		tx.Rollback()
 		return
+	}
+
+	// request a state change.
+	o.globalQueueManagerChan <- ManagerRequest{
+		InstanceId: request.InstanceId,
+		Type:       StateManagerType,
+		Payload: StateTransitionRequest{
+			Context:      request.Context,
+			InstanceId:   request.InstanceId,
+			CurrentState: PreOrder,
+			DesiredState: Ordered,
+			ErrorMessage: "",
+			Response:     nil,
+		},
 	}
 
 	// now that we're done, commit the difference.
 	tx.Commit()
 
+	lsession.Info("order-complete")
+
 	o.RequestRouter <- AuthorizationRequest{
 		InstanceId: request.InstanceId,
 		Order:      order,
 	}
+	if request.Response != nil {
+		request.Response <- ObtainResponse{
+			Error:      nil,
+			Ok:         true,
+			InstanceId: request.InstanceId,
+		}
+	}
+
+	lsession.Debug("authorization-requested-and-response-sent")
 }
 
 type AuthorizationRequest struct {
 	Context    context.Context
 	Order      acme.ExtendedOrder
 	InstanceId string
+	Response   chan AuthorizationResponse
 }
+
+type AuthorizationResponse struct{ Response }
 
 type authError struct {
 	Domain string
@@ -505,42 +687,94 @@ func (o *ObtainmentManager) authRunner() {
 }
 
 func (o *ObtainmentManager) getAuthorizations(request AuthorizationRequest) {
+
+	lsession := o.logger.Session("get-authorizations", lager.Data{
+		"instance-id": request.InstanceId,
+	})
+
 	respc, errc := make(chan acme.Authorization, 150), make(chan authError, 150)
 
 	// in the case there are some nil values.
 	// theoretically this should never kick off, but you never know.
 	// inspections are disabled because of the recovery functionality.
-	defer func(o *ObtainmentManager, request AuthorizationRequest) {
-		if r := recover(); r != nil {
-			//noinspection ALL
-			o.logger.Error("fatality!", errors.New("fatality when trying to get an auth request, is there a nil value?"), lager.Data{
-				"payload": request,
-			})
-		}
-	}(o, request)
+	//defer func(l lager.Logger, request AuthorizationRequest) {
+	//	if r := recover(); r != nil {
+	//		//noinspection GoErrorStringFormat
+	//		l.Error("fatality!", errors.New("fatality when trying to get an auth request, is there a nil value?"), lager.Data{
+	//			"payload": request,
+	//		})
+	//	}
+	//}(lsession, request)
 
 	// this most likely means the request came in after a reboot, so we need to rehydrate state
 	if request.Order.Authorizations == nil {
-		results := o.db.Where("instance_id = ?", request.InstanceId).Find(&request.Order)
-		if results.Error != nil {
-			if results.RecordNotFound() {
-				o.obtainErrors[request.InstanceId] = results.Error
-				o.logger.Error("db-authorization-not-found", results.Error)
+		if err := o.db.Model(&acme.Order{}).Where("instance_id = ?", request.InstanceId).First(); err != nil {
+			if notFound(err) {
+				lsession.Error("authorization-not-found", err)
+				if request.Response != nil {
+					request.Response <- AuthorizationResponse{
+						Response{
+							InstanceId: request.InstanceId,
+							Error:      err,
+							Ok:         false,
+							NotFound:   true,
+						},
+					}
+				}
+
+				o.globalQueueManagerChan <- ManagerRequest{
+					InstanceId: request.InstanceId,
+					Type:       StateManagerType,
+					Payload: StateTransitionRequest{
+						Context:      request.Context,
+						InstanceId:   request.InstanceId,
+						CurrentState: Unknown,
+						DesiredState: Error,
+						ErrorMessage: err.Error(),
+						Response:     nil,
+					},
+				}
+
 				return
 			}
-			o.obtainErrors[request.InstanceId] = results.Error
-			o.logger.Error("db-authorization-query-error", results.Error)
+
+			lsession.Error("db-authorization-query-error", err)
+
+			if request.Response != nil {
+				request.Response <- AuthorizationResponse{
+					Response{
+						Error:      err,
+						Ok:         false,
+						InstanceId: request.InstanceId,
+					},
+				}
+			}
+
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					Context:      request.Context,
+					InstanceId:   request.InstanceId,
+					CurrentState: Unknown,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
+			}
+
 			return
 		}
 	}
 
 	for idx := range request.Order.Authorizations {
-		o.limiter.Take()
 		go func(authzUrl string) {
+			o.limiter.Take()
 			authz, err := o.core.Authorizations.Get(authzUrl)
 			if err != nil {
-				// parts of this section can be nil
-				//noinspection ALL
+				lsession.Error("get-authorization-failure", err, lager.Data{
+					"response": authz,
+				})
 				errc <- authError{
 					Domain: authz.Identifier.Value,
 					Error:  err,
@@ -555,56 +789,158 @@ func (o *ObtainmentManager) getAuthorizations(request AuthorizationRequest) {
 	for i := 0; i < len(request.Order.Authorizations); i++ {
 		select {
 		case err := <-errc: // it doesn't matter how many errors there are, die on the first one.
-			o.obtainErrors[request.InstanceId] = err.Error
-			o.logger.Error("authorization-request", err.Error)
+
+			lsession.Error("authorization-request", err.Error)
+
+			if request.Response != nil {
+				request.Response <- AuthorizationResponse{
+					Response{
+						Error:      err.Error,
+						Ok:         false,
+						InstanceId: request.InstanceId,
+					},
+				}
+			}
 			return
 		case resp := <-respc:
 			responses = append(responses, resp)
 		}
 	}
 
-	var ldata lager.Data
-	for idx, auth := range request.Order.Authorizations {
-		//noinspection ALL
-		ldata[request.Order.Identifiers[idx].Value] = auth
-	}
-	o.logger.Info("auth-urls", ldata)
-
 	// being a transaction
-	tx := o.db.Begin()
-
-	var obtainCheckpoint ObtainCheckpoint
-	result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
-	if result.RecordNotFound() {
-		err := errors.New("cannot find existing checkpoint")
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("db-find-pre-authorization-checkpoint", err)
-		tx.Rollback()
+	tx, err := o.db.Begin()
+	if err != nil {
+		if request.Response != nil {
+			request.Response <- AuthorizationResponse{
+				Response{
+					Error:      err,
+					Ok:         false,
+					InstanceId: request.InstanceId,
+				},
+			}
+		}
 		return
-	} else if result.Error != nil {
-		o.obtainErrors[request.InstanceId] = result.Error
-		o.logger.Error("db-find-pre-authorization-checkpoint", result.Error)
+	}
+
+	// todo (mxplusb): fix state manager integration here
+	var obtainCheckpoint ObtainCheckpointModel
+	if err := o.db.Model(&obtainCheckpoint).Where("instance_id = ?", request.InstanceId).Select(); err != nil {
+		lsession.Error("find-pre-authorization-checkpoint", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: Authorized,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		if request.Response != nil {
+			request.Response <- AuthorizationResponse{
+				Response{
+					Error:      err,
+					Ok:         false,
+					InstanceId: request.InstanceId,
+				},
+			}
+		}
+
 		tx.Rollback()
 		return
 	}
 
-	obtainCheckpoint.Authorizations = responses
 	obtainCheckpoint.State = Authorized
+	obtainCheckpoint.Order = request.Order
+	obtainCheckpoint.Authorizations = responses
 
-	if err := tx.Save(obtainCheckpoint); err.Error != nil {
-		o.obtainErrors[request.InstanceId] = err.Error
-		o.logger.Error("db-save-post-authorization-checkpoint", err.Error)
+	if err := tx.Update(&obtainCheckpoint); err != nil {
+		lsession.Error("save-authorizations", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: Authorized,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		if request.Response != nil {
+			request.Response <- AuthorizationResponse{
+				Response{
+					Error:      err,
+					Ok:         false,
+					InstanceId: request.InstanceId,
+				},
+			}
+		}
+		tx.Rollback()
+		return
+	}
+
+	// todo (mxplusb): add state manager integration
+	if err := tx.Update(&obtainCheckpoint); err != nil {
+		lsession.Error("save-post-authorization-checkpoint", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: Authorized,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		if request.Response != nil {
+			request.Response <- AuthorizationResponse{
+				Response{
+					Error:      err,
+					Ok:         false,
+					InstanceId: request.InstanceId,
+				},
+			}
+		}
 		tx.Rollback()
 		return
 	}
 
 	// save our state.
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: Authorized,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		if request.Response != nil {
+			request.Response <- AuthorizationResponse{
+				Response{
+					Error:      err,
+					Ok:         false,
+					InstanceId: request.InstanceId,
+				},
+			}
+		}
+		tx.Rollback()
+		return
+	}
+
+	// todo (mxplusb): pass this through the state manager.
 
 	o.RequestRouter <- SolveRequest{InstanceId: request.InstanceId}
 }
 
 // Try and solve an ACME challenge.
+// No response is needed since it's just a verification step, no data is added or lost because of this.
 type SolveRequest struct {
 	Context    context.Context
 	InstanceId string
@@ -627,28 +963,46 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 	})
 
 	// begin our transaction
-	tx := o.db.Begin()
-
-	var obtainCheckpoint ObtainCheckpoint
-	result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
-	if result.RecordNotFound() {
-		err := errors.New("cannot find existing checkpoint")
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("db-find-pre-solve-checkpoint", err)
-		tx.Rollback()
+	tx, err := o.db.Begin()
+	if err != nil {
+		lsession.Error("error-beginning-transaction", err)
 		return
-	} else if result.Error != nil {
-		o.obtainErrors[request.InstanceId] = result.Error
-		o.logger.Error("db-find-pre-solve-checkpoint", result.Error)
+	}
+
+	var obtainCheckpoint ObtainCheckpointModel
+	if err := tx.Model(&obtainCheckpoint).Where("instance_id = ?", request.InstanceId).Select(); err != nil {
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: Authorized,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 		tx.Rollback()
 		return
 	}
 
+	// update our state.
 	obtainCheckpoint.State = PreSolve
 
-	if err := tx.Save(obtainCheckpoint); err.Error != nil {
-		o.obtainErrors[request.InstanceId] = err.Error
-		o.logger.Error("db-save-pre-solve-checkpoint", err.Error)
+	// todo (mxplusb): add state manager integration.
+	if err := tx.Update(&obtainCheckpoint); err != nil {
+		lsession.Error("cannot-update-checkpoint", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PreSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 		tx.Rollback()
 		return
 	}
@@ -673,7 +1027,7 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 			},
 		}
 
-		resp := <-respc
+		resp := <-respc // wait for the ELb response to block.
 		sbdnspSettings := &ServiceBrokerDnsProviderSettings{
 			Db:         o.settings.Db,
 			Logger:     o.logger,
@@ -685,9 +1039,8 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 		// been created. we have to do this now instead of after the certificate was provisioned because we need to give
 		// customers the target CNAME value.
 		var localDomainRoute DomainRouteModel
-		results := o.db.Where("instance_id = ?", request.InstanceId).Find(&localDomainRoute)
-		if results.Error != nil {
-			lsession.Error("cannot-find-domain-route-reference", results.Error)
+		if err := o.db.Model(&localDomainRoute).Where("instance_id = ?", request.InstanceId).Select(); err != nil {
+			lsession.Error("cannot-find-domain-route-reference", err)
 			o.globalQueueManagerChan <- ManagerRequest{
 				InstanceId: request.InstanceId,
 				Type:       StateManagerType,
@@ -695,7 +1048,7 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 					InstanceId:   request.InstanceId,
 					CurrentState: PreSolve,
 					DesiredState: Error,
-					ErrorMessage: results.Error.Error(),
+					ErrorMessage: err.Error(),
 					Response:     nil,
 				},
 			}
@@ -703,9 +1056,8 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 		}
 
 		localDomainRoute.ElbArn = *(resp.Elb.LoadBalancerArn)
-		results = o.db.Update(localDomainRoute)
-		if results.Error != nil {
-			lsession.Error("cannot-update-domain-route-reference", results.Error)
+		if err := o.db.Update(localDomainRoute); err != nil {
+			lsession.Error("cannot-update-domain-route-reference", err)
 			o.globalQueueManagerChan <- ManagerRequest{
 				InstanceId: request.InstanceId,
 				Type:       StateManagerType,
@@ -713,16 +1065,30 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 					InstanceId:   request.InstanceId,
 					CurrentState: PreSolve,
 					DesiredState: Error,
-					ErrorMessage: results.Error.Error(),
+					ErrorMessage: err.Error(),
 					Response:     nil,
 				},
 			}
 			return
 		}
 
-		if err := o.client.Challenge.SetDNS01Provider(NewServiceBrokerDNSProvider(sbdnspSettings), dns01.AddRecursiveNameservers(nameservers), dns01.WrapPreCheck(o.preCheck)); err != nil {
-			o.obtainErrors[request.InstanceId] = err
-			o.logger.Error("acme-client-set-dns-provider", err)
+		if err := o.client.Challenge.SetDNS01Provider(
+			NewServiceBrokerDNSProvider(sbdnspSettings),
+			dns01.AddRecursiveNameservers(nameservers),
+			dns01.WrapPreCheck(o.preCheck),
+		); err != nil {
+			lsession.Error("acme-client-set-dns-provider", err)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: PreSolve,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
+			}
 			tx.Rollback()
 			return
 		}
@@ -730,23 +1096,62 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 
 	// commit now because we are starting the solving process.
 	tx.Commit()
+	tx, err = o.db.Begin()
+	if err != nil {
+		lsession.Error("cannot-begin-transaction", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PreSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		tx.Rollback()
+		return
+	}
 
 	// this will start the blocking resolve.
 	// there is no rollback because it has not been solved.
 	// todo (mxplusb): don't forget to implement the deactivations.
 	if err := o.client.resolver.Solve(obtainCheckpoint.Authorizations); err != nil {
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("solve", err)
+		lsession.Error("solve", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PreSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		tx.Rollback()
 		return
 	}
 
+	// we've solved, past the hard blockers!
 	obtainCheckpoint.State = PostSolve
 
 	// we don't rollback a failed save, because the worst case scenario in all of this
 	// we have to solve the challenge again, which is totally fine.
-	if err := tx.Save(obtainCheckpoint); err.Error != nil {
-		o.obtainErrors[request.InstanceId] = err.Error
-		o.logger.Error("db-save-post-solve-checkpoint", err.Error)
+	if err := tx.Update(&obtainCheckpoint); err != nil {
+		lsession.Error("save-post-solve-checkpoint", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PreSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 		return
 	}
 
@@ -764,6 +1169,7 @@ func (o *ObtainmentManager) solve(request SolveRequest) {
 	}
 }
 
+// todo (mxplusb): figure out if we need a request
 type GetCertificateForOrderRequest struct {
 	Domains    []string
 	Order      acme.ExtendedOrder
@@ -783,29 +1189,52 @@ func (o *ObtainmentManager) getCertificateForOrderRunner() {
 }
 
 func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrderRequest) {
+
+	lsession := o.logger.Session("get-certificate-for-order", lager.Data{
+		"instance-id": request.InstanceId,
+	})
+
 	if request.PrivateKey == nil {
 		var err error
 		request.PrivateKey, err = certcrypto.GeneratePrivateKey(o.acmeConfig.Certificate.KeyType)
 		if err != nil {
-			o.obtainErrors[request.InstanceId] = err
-			o.logger.Error("generate-private-key", err)
+			lsession.Error("generate-private-key", err)
 			return
 		}
 	}
 
-	tx := o.db.Begin()
-
-	var obtainCheckpoint ObtainCheckpoint
-	result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
-	if result.RecordNotFound() {
-		err := errors.New("cannot find existing checkpoint")
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("db-find-post-solve-checkpoint", err)
+	tx, err := o.db.Begin()
+	if err != nil {
+		lsession.Error("cannot-begin-transaction", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PostSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 		tx.Rollback()
 		return
-	} else if result.Error != nil {
-		o.obtainErrors[request.InstanceId] = result.Error
-		o.logger.Error("db-find-post-solve-checkpoint", result.Error)
+	}
+
+	var obtainCheckpoint ObtainCheckpointModel
+	if err := tx.Model(&obtainCheckpoint).Where("instance_id = ?", request.InstanceId).Select(); err != nil {
+		lsession.Error("find-post-solve-checkpoint", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PostSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 		tx.Rollback()
 		return
 	}
@@ -831,23 +1260,55 @@ func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrde
 	// todo (mxplusb): should the CSR be customizable?
 	csr, err := certcrypto.GenerateCSR(request.PrivateKey, commonName, san, request.MustStaple)
 	if err != nil {
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("generate-csr", err)
+		lsession.Error("generate-csr", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PostSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		tx.Rollback()
 		return
 	}
 
+	// update our state
 	obtainCheckpoint.State = Finalized
 	obtainCheckpoint.CSR = csr
-	if err := tx.Save(obtainCheckpoint); err.Error != nil {
-		o.obtainErrors[request.InstanceId] = err.Error
-		o.logger.Error("db-save-pre-csr-checkpoint", err.Error)
+	if err := tx.Update(&obtainCheckpoint); err != nil {
+		lsession.Error("db-save-pre-csr-checkpoint", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PostSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 		return
 	}
 
 	orderResp, err := o.client.core.Orders.UpdateForCSR(request.Order.Finalize, csr)
 	if err != nil {
-		o.obtainErrors[request.InstanceId] = err
-		o.logger.Error("finalize-order", err)
+		lsession.Error("finalize-order", err)
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: PostSolve,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
 		return
 	}
 
@@ -868,8 +1329,18 @@ func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrde
 		}
 		resp := <-checkRespc
 		if resp.Error != nil {
-			o.obtainErrors[request.InstanceId] = err
-			o.logger.Error("acme-order-status", err)
+			lsession.Error("acme-order-status", err)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: PostSolve,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
+			}
 			return
 		}
 		if resp.Ok {
@@ -888,8 +1359,7 @@ func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrde
 		select {
 		case <-timeout.C:
 			err := errors.New("acme took too long to issue certificate")
-			o.obtainErrors[request.InstanceId] = err
-			o.logger.Error("acme-order-status", err)
+			lsession.Error("acme-order-status", err)
 			return // "I want to break free" -Freddie Mercury
 		case <-ticker.C:
 			checkRespc := make(chan CheckACMEResponseResult, 1)
@@ -901,8 +1371,7 @@ func (o *ObtainmentManager) getCertificateForOrder(request GetCertificateForOrde
 			}
 			resp := <-checkRespc
 			if resp.Error != nil {
-				o.obtainErrors[request.InstanceId] = err
-				o.logger.Error("acme-order-status", err)
+				lsession.Error("acme-order-status", err)
 				return
 			}
 			if resp.Ok {
@@ -946,7 +1415,6 @@ func (o *ObtainmentManager) checkResponse(request CheckACMEResponseRequest) {
 
 	_, err := o.checkOrderStatus(request.Order)
 	if err != nil {
-		o.obtainErrors[request.InstanceId] = err
 		lsession.Error("acme-invalid-status", err)
 		request.Response <- CheckACMEResponseResult{
 			Ok:    false,
@@ -1018,71 +1486,133 @@ func (o *ObtainmentManager) certificateReadyRunner() {
 
 // Handle the certificate operations.
 func (o *ObtainmentManager) certificateReady(request CertificateReadyRequest) {
+
+	lsession := o.logger.Session("certificate-ready", lager.Data{
+		"instance-id": request.InstanceId,
+	})
+
 	switch request.Op {
 	case Load:
 		var cert certificate.Resource
-		result := o.db.Where("instance_id = ?", request.InstanceId).Find(&cert)
-		if result.RecordNotFound() {
-			err := errors.New("cannot find certificate")
-			o.obtainErrors[request.InstanceId] = err
-			o.logger.Error("db-fetch-certificate", err)
+		if err := o.db.Model(&cert).Where("instance_id = ?", request.InstanceId).First(); err != nil {
+			lsession.Error("fetch-certificate", err)
+			if request.Response != nil {
+				request.Response <- CertificateReadyResponse{
+					Error:       err,
+					Certificate: &certificate.Resource{},
+				}
+			}
+			return
+		}
+		if request.Response != nil {
 			request.Response <- CertificateReadyResponse{
+				InstanceId:  request.InstanceId,
+				Certificate: &cert,
 				Error:       nil,
-				Ready:       false,
-				Certificate: &certificate.Resource{},
+				Ready:       true,
 			}
-			return
-		} else if result.Error != nil {
-			o.obtainErrors[request.InstanceId] = result.Error
-			o.logger.Error("db-fetch-certificate", result.Error)
-			request.Response <- CertificateReadyResponse{
-				Error:       result.Error,
-				Certificate: &certificate.Resource{},
+		}
+	case Store: // todo (mxplusb): add state manager integration.
+		tx, err := o.db.Begin()
+		if err != nil {
+			lsession.Error("cannot-begin-transaction", err)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: Finalized,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
 			}
-			return
-		}
-		request.Response <- CertificateReadyResponse{
-			InstanceId:  request.InstanceId,
-			Certificate: &cert,
-			Error:       nil,
-			Ready:       true,
-		}
-	case Store:
-		tx := o.db.Begin()
-		var obtainCheckpoint ObtainCheckpoint
-		result := tx.Where("instance_id = ?", request.InstanceId).Find(&obtainCheckpoint)
-		if result.RecordNotFound() {
-			err := errors.New("cannot find existing checkpoint")
-			o.obtainErrors[request.InstanceId] = err
-			o.logger.Error("db-find-post-solve-checkpoint", err)
-			tx.Rollback()
-			return
-		} else if result.Error != nil {
-			o.obtainErrors[request.InstanceId] = result.Error
-			o.logger.Error("db-find-post-solve-checkpoint", result.Error)
-			tx.Rollback()
-			return
-		}
-		localCert := Certificate{
-			InstanceId: request.InstanceId,
-			Resource:   request.CertificateResource,
-		}
-		result = tx.Update(&localCert)
-		if result.Error != nil {
-			o.obtainErrors[request.InstanceId] = result.Error
-			o.logger.Error("db-save-certificate", result.Error)
-			tx.Rollback()
-			return
-		}
-		obtainCheckpoint.State = CertificateReady
-		result = tx.Update(&obtainCheckpoint)
-		if result.Error != nil {
-			o.obtainErrors[request.InstanceId] = result.Error
-			o.logger.Error("db-save-certificate-ready", result.Error)
 			tx.Rollback()
 			return
 		}
 
-		tx.Commit()
+		var obtainCheckpoint ObtainCheckpointModel
+		if err := tx.Model(&obtainCheckpoint).Where("instance_id = ?", request.InstanceId).First(); err != nil {
+			lsession.Error("db-find-post-solve-checkpoint", err)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: Finalized,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
+			}
+			tx.Rollback()
+			return
+		}
+
+		localCert := Certificate{
+			InstanceId: request.InstanceId,
+			Resource:   request.CertificateResource,
+		}
+		if err := tx.Update(&localCert); err != nil {
+			lsession.Error("db-save-certificate", err)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: Finalized,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
+			}
+			tx.Rollback()
+			return
+		}
+		obtainCheckpoint.State = CertificateReady
+		if err := tx.Update(&obtainCheckpoint); err != nil {
+			lsession.Error("db-save-certificate-ready", err)
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: Finalized,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
+			}
+			tx.Rollback()
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			o.globalQueueManagerChan <- ManagerRequest{
+				InstanceId: request.InstanceId,
+				Type:       StateManagerType,
+				Payload: StateTransitionRequest{
+					InstanceId:   request.InstanceId,
+					CurrentState: Finalized,
+					DesiredState: Error,
+					ErrorMessage: err.Error(),
+					Response:     nil,
+				},
+			}
+			tx.Rollback()
+			return
+		}
+		o.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: Finalized,
+				DesiredState: CertificateReady,
+				ErrorMessage: nil,
+				Response:     nil,
+			},
+		}
 	}
+
 }
