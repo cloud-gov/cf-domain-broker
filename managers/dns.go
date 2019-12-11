@@ -8,15 +8,17 @@ import (
 
 	"code.cloudfoundry.org/lager"
 	cfdomainbroker "github.com/18f/cf-domain-broker"
+	"github.com/go-pg/pg/v9"
 	"github.com/jinzhu/gorm"
 )
 
 const (
+	// todo (mxplusb): clean this up to be more helpful
 	msg = `In order to properly use this, you need to first ensure the desired domain name you want is created with the value of the 'cname' field so the domain is resolvable. Then, create the TXT record using the attached values. You can set whatever TTL value you want on the TXT record, but our recommendation is better. Once you've doneIf the TXT record isn't set to the below value before the validity expires, you will need to create a new instance of this service.`
 )
 
 type ServiceBrokerDnsProviderSettings struct {
-	Db         *gorm.DB
+	Db         *pg.DB
 	Logger     lager.Logger
 	InstanceId string
 	LogLevel   int
@@ -27,7 +29,7 @@ type ServiceBrokerDnsProviderSettings struct {
 // Internal DNS provider.
 type ServiceBrokerDNSProvider struct {
 	// db access
-	db         *gorm.DB
+	db         *pg.DB
 	logger     lager.Logger
 	instanceId string
 	settings   *ServiceBrokerDnsProviderSettings
@@ -87,14 +89,14 @@ func (s ServiceBrokerDNSProvider) Present(domain, token, keyAuth string) error {
 	})
 
 	if s.settings.LogLevel == 1 {
-		if err := s.db.Debug().Create(&authRecord).Error; err != nil {
+		if err := s.db.Insert(&authRecord); err != nil {
 			s.logger.Error("db-debug-store-dns-challenge", err, lager.Data{
 				"record": authRecord,
 			})
 			return err
 		}
 	} else {
-		if err := s.db.Create(&authRecord).Error; err != nil {
+		if err := s.db.Insert(&authRecord); err != nil {
 			s.logger.Error("db-store-dns-challenge", err, lager.Data{
 				"record": authRecord,
 			})
@@ -109,7 +111,7 @@ func (s ServiceBrokerDNSProvider) CleanUp(domain, token, keyAuth string) error {
 	authRecord := DomainMessenger{
 		InstanceId: s.instanceId,
 	}
-	if err := s.db.Delete(&authRecord).Error; err != nil {
+	if err := s.db.Delete(&authRecord); err != nil {
 		s.logger.Error("db-delete-dns-challenge-failure", err)
 		return err
 	}
