@@ -31,8 +31,7 @@ The Broker can be configured via the following environment variables:
 
 #### DNS Resolvers
 
-Because the broker uses an [integration ACME tool called
-Gravel](https://github.com/18f/gravel), the internal ACME client leverages a
+The internal ACME client leverages a
 custom DNS resolver precheck. This means the internal ACME client will try to
 resolve TXT records from DNS-01 challenges before informing the upstream ACME
 server the record is ready to be resolved. As part of that, if no resolvers are
