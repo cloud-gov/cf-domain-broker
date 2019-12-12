@@ -20,8 +20,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/go-acme/lego/v3/lego"
-	"github.com/jinzhu/gorm"
-	_ "github.com/jinzhu/gorm/dialects/sqlite"
+	"github.com/go-pg/pg/v9"
+	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"github.com/pborman/uuid"
 	"github.com/pivotal-cf/brokerapi/domain"
 	"github.com/stretchr/testify/suite"
@@ -37,15 +37,19 @@ func TestBrokerSuite(t *testing.T) {
 // Mocks and such.
 type BrokerSuite struct {
 	suite.Suite
-	DomainBrokerSettings      *DomainBrokerSettings
-	DomainBroker              *DomainBroker
-	WorkerManagerSettings     *managers.WorkerManagerSettings
-	WorkerManager             *managers.WorkerManager
-	ObtainmentManagerSettings *managers.ObtainmentManagerSettings
-	ObtainmentManager         *managers.ObtainmentManager
-	RuntimeSettings           *types.RuntimeSettings
+	DomainBrokerSettings       *DomainBrokerSettings
+	DomainBroker               *DomainBroker
+	WorkerManagerSettings      *managers.WorkerManagerSettings
+	WorkerManager              *managers.WorkerManager
+	ObtainmentManagerSettings  *managers.ObtainmentManagerSettings
+	ObtainmentManager          *managers.ObtainmentManager
+	GlobalQueueManagerSettings *managers.GlobalQueueManagerSettings
+	GlobalQueueManager         *managers.GlobalQueueManager
+	StateManager               *managers.StateManager
+	StateManagerSettings       *managers.StateManagerSettings
+	RuntimeSettings            *types.RuntimeSettings
 
-	Db     *gorm.DB
+	Db     *pg.DB
 	Gravel *gravel.Gravel
 
 	Logger lager.Logger
@@ -53,18 +57,14 @@ type BrokerSuite struct {
 
 // This sets up the test suite before each test.
 func (s *BrokerSuite) SetupTest() {
-	var err error
-	s.Db, err = gorm.Open("sqlite3", "test.db")
-	s.Require().NoError(err)
 
-	// migrate our Db to set up the schema.
-	if err := s.Db.AutoMigrate(&managers.DomainRouteModel{},
-		&managers.UserData{},
-		&managers.Domain{},
-		&managers.Certificate{},
-		&managers.DomainMessenger{}).Error; err != nil {
-		s.Require().NoError(err)
-	}
+	var err error
+
+	s.Db = pg.Connect(&pg.Options{
+		User:     "test",
+		Database: "broker",
+		Addr:     "127.0.0.1:5432",
+	})
 
 	// set up the gravel test harness.
 	gravelOpts := gravel.NewDefaultGravelOpts()
@@ -112,13 +112,13 @@ func (s *BrokerSuite) SetupTest() {
 	// set up our test writers.
 	// set up our logging writers.
 	debugSink := lager.NewPrettySink(os.Stdout, lager.DEBUG)
-	normalSink := lager.NewPrettySink(os.Stdout, lager.INFO)
+	//normalSink := lager.NewPrettySink(os.Stdout, lager.INFO)
 	errorSink := lager.NewPrettySink(os.Stderr, lager.ERROR)
 	fatalSink := lager.NewPrettySink(os.Stderr, lager.FATAL)
 
 	logger := lager.NewLogger("test")
 	logger.RegisterSink(debugSink)
-	logger.RegisterSink(normalSink)
+	//logger.RegisterSink(normalSink)
 	logger.RegisterSink(errorSink)
 	logger.RegisterSink(fatalSink)
 	loggerSession := logger.Session("suite")
@@ -141,13 +141,12 @@ func (s *BrokerSuite) SetupTest() {
 	conf.HTTPClient = s.Gravel.Client
 
 	s.ObtainmentManagerSettings = &managers.ObtainmentManagerSettings{
-		Autostart:    true,
-		ACMEConfig:   conf,
-		Db:           s.Db,
-		ElbRequester: make(chan managers.ElbRequest, 10),
-		Logger:       loggerSession,
-		PrivateKey:   conf.User.GetPrivateKey(),
-		Resolvers:    s.RuntimeSettings.Resolvers,
+		Autostart:  true,
+		ACMEConfig: conf,
+		Db:         s.Db,
+		Logger:     loggerSession,
+		PrivateKey: conf.User.GetPrivateKey(),
+		Resolvers:  s.RuntimeSettings.Resolvers,
 	}
 
 	s.WorkerManagerSettings = &managers.WorkerManagerSettings{
@@ -156,23 +155,35 @@ func (s *BrokerSuite) SetupTest() {
 		IamSvc:                      iamSvc,
 		CloudFront:                  nil,
 		ElbSvc:                      elbSvc,
-		ElbRequest:                  make(chan managers.ElbRequest),
 		ElbUpdateFrequencyInSeconds: 15,
 		LogLevel:                    1,
 		Logger:                      loggerSession,
 		ObtainmentManagerSettings:   s.ObtainmentManagerSettings,
 	}
 
-	s.WorkerManager, err = managers.NewWorkerManager(s.WorkerManagerSettings)
+	s.StateManagerSettings = &managers.StateManagerSettings{
+		Autostart: true,
+		Db:        s.Db,
+		Logger:    loggerSession,
+	}
+
+	s.GlobalQueueManagerSettings = &managers.GlobalQueueManagerSettings{
+		Autostart:                 true,
+		QueueDepth:                150,
+		ObtainmentManagerSettings: s.ObtainmentManagerSettings,
+		WorkerManagerSettings:     s.WorkerManagerSettings,
+		StateManagerSettings:      s.StateManagerSettings,
+	}
+
+	s.GlobalQueueManager, err = managers.NewGlobalQueueManager(s.GlobalQueueManagerSettings)
 	if err != nil {
 		s.T().Error(err)
 		s.T().FailNow()
 	}
 
 	s.DomainBrokerSettings = &DomainBrokerSettings{
-		Db:            s.Db,
-		Logger:        loggerSession,
-		WorkerManager: s.WorkerManager,
+		Logger:             loggerSession,
+		GlobalQueueManager: s.GlobalQueueManager,
 	}
 
 	s.DomainBroker = NewDomainBroker(s.DomainBrokerSettings)
@@ -187,6 +198,12 @@ func (s *BrokerSuite) TearDownTest() {
 	s.WorkerManagerSettings = &managers.WorkerManagerSettings{}
 	s.WorkerManager = &managers.WorkerManager{}
 	s.RuntimeSettings = &types.RuntimeSettings{}
+	s.GlobalQueueManager = &managers.GlobalQueueManager{}
+	s.GlobalQueueManagerSettings = &managers.GlobalQueueManagerSettings{}
+	s.StateManagerSettings = &managers.StateManagerSettings{}
+	s.StateManager = &managers.StateManager{}
+
+	s.Db.Exec("DROP SCHEMA public CASCADE")
 
 	if err := s.Db.Close(); err != nil {
 		s.Require().NoError(err, "there should not be an error closing the test db")
@@ -196,7 +213,7 @@ func (s *BrokerSuite) TearDownTest() {
 		s.Require().NoError(err, "there should be no error deleting the test db file.")
 	}
 
-	s.Db = &gorm.DB{}
+	s.Db = &pg.DB{}
 
 	if err := s.Gravel.CertificateServer.Shutdown(context.TODO()); err != nil {
 		s.Require().NoError(err, "gravel certificate server must shutdown cleanly")
@@ -228,10 +245,10 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 	s.EqualValues(domain.ProvisionedServiceSpec{IsAsync: true}, res, "expected async response")
 
 	// sleep a bit to let the workers do their thing.
-	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
+	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
 	var verifyRoute managers.DomainRouteModel
-	if err := s.Db.Where("instance_id = ?", serviceInstanceId).Find(&verifyRoute).Error; err != nil {
+	if err := s.Db.Model(&verifyRoute).Where("instance_id = ?", serviceInstanceId).First(); err != nil {
 		s.Require().NoError(err, "there should be no error querying for the domain route")
 	}
 
@@ -239,13 +256,12 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlan() {
 
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
-	localCert := &managers.Certificate{}
-	if err := s.Db.Where("instance_id = ?", serviceInstanceId).First(&localCert).Error; err != nil {
+	var localCert managers.Certificate
+	if err := s.Db.Model(&localCert).Where("instance_id = ?", serviceInstanceId).First(); err != nil {
 		s.Require().NoError(err, "there should be no error when searching for the related certificate in the database")
 	}
 
 	s.Require().EqualValues(serviceInstanceId, verifyRoute.InstanceId, "service instance id must match deployed service instance")
-	s.Require().EqualValues(cfdomainbroker.Provisioned, verifyRoute.State, "state must be provisioned")
 	s.Require().NotNil(localCert, "certificate result must not be nil")
 	s.Require().NotEmpty(localCert.Resource.Certificate, "certificate must not be empty")
 }
@@ -280,7 +296,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	var localDomainMessenger managers.DomainMessenger
-	if err := s.Db.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessenger).Error; err != nil {
+	if err := s.Db.Model(&localDomainMessenger).Where("instance_id = ?", serviceInstanceId).First(); err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
 	}
 
@@ -309,7 +325,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithDomainMessenger() 
 	localCert := managers.Certificate{
 		InstanceId: serviceInstanceId,
 	}
-	if err := s.Db.Where("instance_id = ?", localCert.InstanceId).Find(&localCert).Error; err != nil {
+	if err := s.Db.Model(&localCert).Where("instance_id = ?", localCert.InstanceId).First(); err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a provisioned certificate")
 	}
 
@@ -340,19 +356,18 @@ func (s *BrokerSuite) TestDomainBroker_AutoProvisionDomainPlanWithMultipleSAN() 
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", false)
 
 	var verifyRoute managers.DomainRouteModel
-	if err := s.Db.Where("instance_id = ?", serviceInstanceId).First(&verifyRoute).Error; err != nil {
+	if err := s.Db.Model(&verifyRoute).Where("instance_id = ?", serviceInstanceId).First(); err != nil {
 		s.Require().NoError(err, "there should be no error querying for the domain route")
 	}
 
 	s.Require().NotNil(verifyRoute, "the route must not be empty")
 
-	localCert := &managers.Certificate{}
-	if err := s.Db.Where("instance_id = ?", serviceInstanceId).First(&localCert).Error; err != nil {
+	var localCert managers.Certificate
+	if err := s.Db.Model(&localCert).Where("instance_id = ?", serviceInstanceId).First(); err != nil {
 		s.Require().NoError(err, "there should be no error when searching for the related certificate in the database")
 	}
 
 	s.Require().EqualValues(serviceInstanceId, verifyRoute.InstanceId, "service instance id must match deployed service instance")
-	s.Require().EqualValues(cfdomainbroker.Provisioned, verifyRoute.State, "state must be provisioned")
 	s.Require().NotNil(localCert, "certificate result must not be nil")
 	s.Require().NotEmpty(localCert.Resource.Certificate, "certificate must not be empty")
 }
@@ -386,8 +401,8 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 	// sleep for a bit to let the cert get issues and the db store things.
 	s.awaiter(serviceInstanceId, "there should be no provisioning errors", true)
 
-	var localDomainMessengers []managers.DomainMessenger
-	if err := s.Db.Where("instance_id = ?", serviceInstanceId).Find(&localDomainMessengers).Error; err != nil {
+	var localDomainMessengers []*managers.DomainMessenger
+	if err := s.Db.Model(&localDomainMessengers).Where("instance_id = ?", serviceInstanceId).Select(); err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a matching domain")
 	}
 	s.Require().Equal(3, len(localDomainMessengers), "there should be 3 domain authentication items")
@@ -413,7 +428,7 @@ func (s *BrokerSuite) TestDomainBroker_ProvisionDomainPlanWithMultipleSANUsingTh
 	localCert := managers.Certificate{
 		InstanceId: serviceInstanceId,
 	}
-	if err := s.Db.Where("instance_id = ?", localCert.InstanceId).Find(&localCert).Error; err != nil {
+	if err := s.Db.Model(&localCert).Where("instance_id = ?", localCert.InstanceId).First(); err != nil {
 		s.Require().NoError(err, "there should be no errors when querying the database for a provisioned certificate")
 	}
 
@@ -456,10 +471,9 @@ func (s *BrokerSuite) TestDomainBroker_Deprovision() {
 	localRoute := managers.DomainRouteModel{
 		InstanceId: serviceInstanceId,
 	}
-	dbResp := s.Db.Where("instance_id = ?", &localRoute.InstanceId).Find(&localRoute)
+	err = s.Db.Model(&localRoute).Where("instance_id = ?", &localRoute.InstanceId).First()
 
-	s.Require().NoError(dbResp.Error, "there must not be an error when querying the db")
-	s.Require().Equal(cfdomainbroker.Deprovisioned, localRoute.State, "the state must be deprovisioned")
+	s.Require().NoError(err, "there must not be an error when querying the db")
 }
 
 func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
@@ -497,10 +511,9 @@ func (s *BrokerSuite) TestDomainBroker_DeprovisionMultipleCertificates() {
 	localRoute := managers.DomainRouteModel{
 		InstanceId: serviceInstanceId,
 	}
-	dbResp := s.Db.Where("instance_id = ?", &localRoute.InstanceId).Find(&localRoute)
+	err = s.Db.Model(&localRoute).Where("instance_id = ?", &localRoute.InstanceId).First()
 
-	s.Require().NoError(dbResp.Error, "there must not be an error when querying the db")
-	s.Require().Equal(cfdomainbroker.Deprovisioned, localRoute.State, "the state must be deprovisioned")
+	s.Require().NoError(err, "there must not be an error when querying the db")
 }
 
 func (s *BrokerSuite) TestDomainBroker_Services() {
@@ -567,10 +580,14 @@ func (s *BrokerSuite) awaiter(si, description string, wait bool) {
 		case <-ticker.C:
 			s.Require().NoError(func() error {
 				getInstanceRespChan := make(chan managers.GetInstanceResponse, 1)
-				s.WorkerManager.RequestRouter <- managers.GetInstanceRequest{
-					Context:    context.TODO(),
+				s.GlobalQueueManager.Queue <- managers.ManagerRequest{
 					InstanceId: si,
-					Response:   getInstanceRespChan,
+					Type:       managers.WorkerManagerType,
+					Payload: managers.GetInstanceRequest{
+						Context:    context.TODO(),
+						InstanceId: si,
+						Response:   getInstanceRespChan,
+					},
 				}
 				resp := <-getInstanceRespChan
 				if resp.ErrorNotFound { // that will happen for awhile, we're just checking for provisioning errors specifically.

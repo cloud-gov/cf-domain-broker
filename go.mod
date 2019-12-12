@@ -15,7 +15,6 @@ require (
 	github.com/jinzhu/now v1.1.1 // indirect
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/lib/pq v1.2.0 // indirect
-	github.com/mattn/go-sqlite3 v1.11.0
 	github.com/miekg/dns v1.1.22
 	github.com/pborman/uuid v1.2.0
 	github.com/pivotal-cf/brokerapi v6.4.2+incompatible

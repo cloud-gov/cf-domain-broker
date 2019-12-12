@@ -9,13 +9,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/elbv2/elbv2iface"
 	"github.com/aws/aws-sdk-go/service/iam/iamiface"
 	"github.com/go-acme/lego/v3/challenge"
-	"github.com/jinzhu/gorm"
 )
 
 type GlobalSettings struct {
-	// Internal database.
-	Db *gorm.DB
-
 	// Inherited from main.
 	Logger lager.Logger
 

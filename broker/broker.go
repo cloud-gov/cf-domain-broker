@@ -10,28 +10,26 @@ import (
 	cfdomainbroker "github.com/18f/cf-domain-broker"
 	"github.com/18f/cf-domain-broker/managers"
 	"github.com/18f/cf-domain-broker/types"
-	"github.com/jinzhu/gorm"
 	"github.com/pivotal-cf/brokerapi/domain"
 	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
 )
 
 type DomainBrokerSettings struct {
-	Db            *gorm.DB
-	Logger        lager.Logger
-	WorkerManager *managers.WorkerManager
+	Logger             lager.Logger
+	GlobalQueueManager *managers.GlobalQueueManager
 }
 
 type DomainBroker struct {
-	logger        lager.Logger
-	settings      *DomainBrokerSettings
-	workerManager *managers.WorkerManager
+	logger             lager.Logger
+	settings           *DomainBrokerSettings
+	globalQueueManager *managers.GlobalQueueManager
 }
 
 func NewDomainBroker(settings *DomainBrokerSettings) *DomainBroker {
 	db := &DomainBroker{
-		settings:      settings,
-		workerManager: settings.WorkerManager,
-		logger:        settings.Logger.Session("domain-broker"),
+		settings:           settings,
+		logger:             settings.Logger.Session("domain-broker"),
+		globalQueueManager: settings.GlobalQueueManager,
 	}
 	return db
 }
@@ -159,58 +157,60 @@ func (d *DomainBroker) Provision(ctx context.Context, instanceID string, details
 			domOpts.Domains = domainModels
 		}
 	}
-	lsession.Info("creating new service instance.", lager.Data{
+	lsession.Info("creating-new-service-instance", lager.Data{
 		"plan-id": planId,
 	})
 
 	// check for duplicates.
 	getInstanceResponse := make(chan managers.GetInstanceResponse, 1)
-	d.workerManager.RequestRouter <- managers.GetInstanceRequest{
-		Context:    ctx,
+	d.globalQueueManager.Queue <- managers.ManagerRequest{
 		InstanceId: instanceID,
-		Response:   getInstanceResponse,
+		Type:       managers.WorkerManagerType,
+		Payload: managers.GetInstanceRequest{
+			Context:    ctx,
+			InstanceId: instanceID,
+			Response:   getInstanceResponse,
+		},
 	}
 	resp := <-getInstanceResponse
 
+	// todo (mxplusb): check for existing domains that haven't been expired yet.
 	if resp.Route.InstanceId == instanceID {
 		lsession.Info("preexisting-instance")
 		return spec, apiresponses.ErrInstanceAlreadyExists
-	} else if resp.Error != nil {
-		lsession.Error("error-checking-existing-action", resp.Error)
-		if !resp.ErrorNotFound {
-			lsession.Error("generic-error-checking-existing-action", resp.Error)
-			return spec, apiresponses.NewFailureResponse(resp.Error, http.StatusInternalServerError, "generic-error-checking-existing-action")
-		}
-	}
-
-	tags := map[string]string{
-		"Organization": details.OrganizationGUID,
-		"Space":        details.SpaceGUID,
-		"Service":      details.ServiceID,
-		"Plan":         details.PlanID,
-	}
-
-	// build the request
-	req := managers.ProvisionRequest{
-		Context:    ctx,
-		InstanceId: instanceID,
-		DomainOpts: domOpts,
-		CdnOpts:    cdnOpts,
-		Tags:       tags,
 	}
 
 	// send the request
-	d.workerManager.RequestRouter <- req
+	d.globalQueueManager.Queue <- managers.ManagerRequest{
+		InstanceId: instanceID,
+		Type:       managers.WorkerManagerType,
+		Payload: managers.ProvisionRequest{
+			Context:    ctx,
+			InstanceId: instanceID,
+			DomainOpts: domOpts,
+			CdnOpts:    cdnOpts,
+			Tags: map[string]string{
+				"Organization": details.OrganizationGUID,
+				"Space":        details.SpaceGUID,
+				"Service":      details.ServiceID,
+				"Plan":         details.PlanID,
+			},
+		},
+	}
 
 	return domain.ProvisionedServiceSpec{IsAsync: true}, nil
 }
 
 func (d *DomainBroker) Deprovision(ctx context.Context, instanceID string, details domain.DeprovisionDetails, asyncAllowed bool) (domain.DeprovisionServiceSpec, error) {
 	getInstanceResponsec := make(chan managers.GetInstanceResponse, 1)
-	d.workerManager.RequestRouter <- managers.GetInstanceRequest{
-		Context:    ctx,
+	d.globalQueueManager.Queue <- managers.ManagerRequest{
 		InstanceId: instanceID,
-		Response:   getInstanceResponsec,
+		Type:       managers.WorkerManagerType,
+		Payload: managers.GetInstanceRequest{
+			Context:    ctx,
+			InstanceId: instanceID,
+			Response:   getInstanceResponsec,
+		},
 	}
 
 	getInstanceResponse := <-getInstanceResponsec
@@ -219,12 +219,16 @@ func (d *DomainBroker) Deprovision(ctx context.Context, instanceID string, detai
 	}
 
 	deprovisionResponsec := make(chan managers.DeprovisionResponse, 1)
-	d.workerManager.RequestRouter <- managers.DeprovisionRequest{
-		Context:      ctx,
-		InstanceId:   instanceID,
-		Details:      details,
-		AsyncAllowed: asyncAllowed,
-		Response:     deprovisionResponsec,
+	d.globalQueueManager.Queue <- managers.ManagerRequest{
+		InstanceId: instanceID,
+		Type:       managers.WorkerManagerType,
+		Payload: managers.DeprovisionRequest{
+			Context:      ctx,
+			InstanceId:   instanceID,
+			Details:      details,
+			AsyncAllowed: asyncAllowed,
+			Response:     deprovisionResponsec,
+		},
 	}
 
 	return domain.DeprovisionServiceSpec{IsAsync: true}, nil
@@ -260,7 +264,11 @@ func (d *DomainBroker) LastOperation(ctx context.Context, instanceID string, det
 		Details:    details,
 		Response:   lastOpsRespc,
 	}
-	d.workerManager.RequestRouter <- lastOpReq
+	d.globalQueueManager.Queue <- managers.ManagerRequest{
+		InstanceId: instanceID,
+		Type:       managers.WorkerManagerType,
+		Payload:    lastOpReq,
+	}
 	lastOpResp := <-lastOpsRespc
 
 	if lastOpResp.Error != nil {

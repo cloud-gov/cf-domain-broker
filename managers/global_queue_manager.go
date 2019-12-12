@@ -1,12 +1,12 @@
 package managers
 
-type GlobalQueueSettings struct {
+type GlobalQueueManagerSettings struct {
 	// Autostart all the workers, this should be true.
 	Autostart                 bool
 	QueueDepth                int
-	ObtainmentManagerSettings *ObtainmentManagerSettings
-	StateManagerSettings      *StateManagerSettings
-	WorkerManagerSettings     *WorkerManagerSettings
+	*ObtainmentManagerSettings
+	*StateManagerSettings
+	*WorkerManagerSettings
 }
 
 type GlobalQueueManager struct {
@@ -17,7 +17,7 @@ type GlobalQueueManager struct {
 	stateManager      *StateManager
 }
 
-func NewGlobalQueueManager(settings *GlobalQueueSettings) (*GlobalQueueManager, error) {
+func NewGlobalQueueManager(settings *GlobalQueueManagerSettings) (*GlobalQueueManager, error) {
 	g := &GlobalQueueManager{
 		Queue: make(chan ManagerRequest, settings.QueueDepth),
 	}
