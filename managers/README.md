@@ -32,3 +32,10 @@ WM: Worker Manager<br/>
 OM: Obtainment Manager<br/>
 RR: Request Router<br/>
 </sub>
+
+
+
+
+```sql
+drop database broker; drop user test; create user test with encrypted password 'testpass'; create database broker;
+```

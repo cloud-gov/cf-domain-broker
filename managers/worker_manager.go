@@ -20,13 +20,13 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/iam/iamiface"
 	"github.com/go-acme/lego/v3/certificate"
-	"github.com/jinzhu/gorm"
+	"github.com/go-pg/pg/v9"
 	"github.com/pivotal-cf/brokerapi/domain"
 )
 
 type WorkerManagerSettings struct {
 	AutoStartWorkerPool         bool
-	Db                          *gorm.DB
+	Db                          *pg.DB
 	IamSvc                      iamiface.IAMAPI
 	CloudFront                  cloudfrontiface.CloudFrontAPI
 	ElbNames                    []*string
@@ -46,7 +46,7 @@ type WorkerManager struct {
 	RequestRouter               chan interface{}
 	Running                     bool
 	settings                    *WorkerManagerSettings
-	db                          *gorm.DB
+	db                          *pg.DB
 	provisionRequest            chan ProvisionRequest
 	deprovisionRequest          chan DeprovisionRequest
 	getInstanceRequest          chan GetInstanceRequest
@@ -254,9 +254,8 @@ func (w *WorkerManager) elbUpload(request ElbUploadRequest) {
 	})
 
 	var localDomainRoute DomainRouteModel
-	results := w.db.Where("instance_id = ?", request.InstanceId).Find(&localDomainRoute)
-	if results.Error != nil {
-		lsession.Error("cannot-find-domain-route-reference", results.Error)
+	if err := w.db.Model(&localDomainRoute).Where("instance_id = ?", request.InstanceId).First(); err != nil {
+		lsession.Error("cannot-find-domain-route-reference", err)
 		w.globalQueueManagerChan <- ManagerRequest{
 			InstanceId: request.InstanceId,
 			Type:       StateManagerType,
@@ -264,7 +263,7 @@ func (w *WorkerManager) elbUpload(request ElbUploadRequest) {
 				InstanceId:   request.InstanceId,
 				CurrentState: IamCertificateUploaded,
 				DesiredState: Error,
-				ErrorMessage: results.Error.Error(),
+				ErrorMessage: err.Error(),
 				Response:     nil,
 			},
 		}
@@ -272,16 +271,15 @@ func (w *WorkerManager) elbUpload(request ElbUploadRequest) {
 			request.Response <- ElbUploadResponse{
 				InstanceId: request.InstanceId,
 				Ok:         false,
-				Error:      results.Error,
+				Error:      err,
 			}
 		}
 		return
 	}
 
 	var localCert Certificate
-	results = w.db.Where("instance_id = ?", request.InstanceId).Find(&localCert)
-	if results.Error != nil {
-		lsession.Error("cannot-find-certificate-reference", results.Error)
+	if err := w.db.Model(&localCert).Where("instance_id = ?", request.InstanceId).First(); err != nil {
+		lsession.Error("cannot-find-certificate-reference", err)
 		w.globalQueueManagerChan <- ManagerRequest{
 			InstanceId: request.InstanceId,
 			Type:       StateManagerType,
@@ -289,7 +287,7 @@ func (w *WorkerManager) elbUpload(request ElbUploadRequest) {
 				InstanceId:   request.InstanceId,
 				CurrentState: IamCertificateUploaded,
 				DesiredState: Error,
-				ErrorMessage: results.Error.Error(),
+				ErrorMessage: err.Error(),
 				Response:     nil,
 			},
 		}
@@ -297,7 +295,7 @@ func (w *WorkerManager) elbUpload(request ElbUploadRequest) {
 			request.Response <- ElbUploadResponse{
 				InstanceId: request.InstanceId,
 				Ok:         false,
-				Error:      results.Error,
+				Error:      err,
 			}
 		}
 		return
@@ -452,9 +450,8 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 	})
 
 	var localCert Certificate
-	results := w.db.Where("instance_id = ?").Find(&localCert)
-	if results.Error != nil {
-		lsession.Error("cannot-get-certificate-reference", results.Error)
+	if err := w.db.Model(&localCert).Where("instance_id = ?").First(); err != nil {
+		lsession.Error("cannot-get-certificate-reference", err)
 		w.globalQueueManagerChan <- ManagerRequest{
 			InstanceId: request.InstanceId,
 			Type:       StateManagerType,
@@ -462,7 +459,7 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 				InstanceId:   request.InstanceId,
 				CurrentState: Unknown,
 				DesiredState: Error,
-				ErrorMessage: results.Error.Error(),
+				ErrorMessage: err.Error(),
 				Response:     nil,
 			},
 		}
@@ -470,7 +467,7 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 			request.Response <- IamUploadResponse{
 				InstanceId: request.InstanceId,
 				Ok:         false,
-				Error:      results.Error,
+				Error:      err,
 			}
 		}
 		return
@@ -501,7 +498,7 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 			request.Response <- IamUploadResponse{
 				InstanceId: request.InstanceId,
 				Ok:         false,
-				Error:      results.Error,
+				Error:      err,
 			}
 		}
 		return
@@ -526,15 +523,14 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 			request.Response <- IamUploadResponse{
 				InstanceId: request.InstanceId,
 				Ok:         false,
-				Error:      results.Error,
+				Error:      err,
 			}
 		}
 		return
 	}
 
 	var localRoute DomainRouteModel
-	results = w.db.Where("instance_id = ?", request.InstanceId).Find(&localRoute)
-	if results.Error != nil {
+	if err := w.db.Model(&localRoute).Where("instance_id = ?", request.InstanceId).First(); err != nil {
 		lsession.Error("error-finding-domain-route", err)
 		if request.Response != nil {
 		}
@@ -553,7 +549,7 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 			request.Response <- IamUploadResponse{
 				InstanceId: request.InstanceId,
 				Ok:         false,
-				Error:      results.Error,
+				Error:      err,
 			}
 		}
 		return
@@ -561,9 +557,31 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 
 	localRoute.IamCertificateArn = *(certArn.ServerCertificateMetadata.Arn)
 
-	tx := w.db.Begin()
-	results = tx.Update(localCert)
-	if results.Error != nil {
+	tx, err := w.db.Begin()
+	if err != nil {
+		lsession.Error("cannot-begin-transaction", err)
+		w.globalQueueManagerChan <- ManagerRequest{
+			InstanceId: request.InstanceId,
+			Type:       StateManagerType,
+			Payload: StateTransitionRequest{
+				InstanceId:   request.InstanceId,
+				CurrentState: Unknown,
+				DesiredState: Error,
+				ErrorMessage: err.Error(),
+				Response:     nil,
+			},
+		}
+		if request.Response != nil {
+			request.Response <- IamUploadResponse{
+				InstanceId: request.InstanceId,
+				Ok:         false,
+				Error:      err,
+			}
+		}
+		return
+	}
+
+	if err := tx.Update(localCert); err != nil {
 		lsession.Error("db-update-certificate-arn", err)
 		w.globalQueueManagerChan <- ManagerRequest{
 			InstanceId: request.InstanceId,
@@ -580,7 +598,7 @@ func (w *WorkerManager) iamUpload(request IamUploadRequest) {
 			request.Response <- IamUploadResponse{
 				InstanceId: request.InstanceId,
 				Ok:         false,
-				Error:      results.Error,
+				Error:      err,
 			}
 		}
 		tx.Rollback()
@@ -625,8 +643,6 @@ func (w *WorkerManager) provision(request ProvisionRequest) {
 	})
 
 	if len(request.DomainOpts.Domains) > 0 {
-		lsession.Debug("acme-dns-provider-assigned")
-
 		// tell the system we're changing state to provisioning.
 		provisionStateReqRespc := make(chan StateTransitionResponse, 1)
 		w.globalQueueManagerChan <- ManagerRequest{
@@ -634,7 +650,7 @@ func (w *WorkerManager) provision(request ProvisionRequest) {
 			Type:       StateManagerType,
 			Payload: StateTransitionRequest{
 				InstanceId:   request.InstanceId,
-				CurrentState: New,
+				DesiredState: New,
 				Response:     provisionStateReqRespc,
 			},
 		}
@@ -653,19 +669,13 @@ func (w *WorkerManager) provision(request ProvisionRequest) {
 
 		// store the certificate and elb info the database.
 		// check for debug.
-		if w.settings.LogLevel == 1 {
-			if err := w.settings.Db.Debug().Create(&localDomainRoute).Error; err != nil {
-				lsession.Error("db-debug-save-route", err)
-				w.provisioningErrorMap[request.InstanceId] = err
-				return
-			}
-		} else {
-			if err := w.settings.Db.Create(&localDomainRoute).Error; err != nil {
-				lsession.Error("db-save-route", err)
-				w.provisioningErrorMap[request.InstanceId] = err
-				return
-			}
+		// todo (mxplusb): convert this into proper transaction
+		if err := w.settings.Db.Insert(&localDomainRoute); err != nil {
+			lsession.Error("db-debug-save-route", err)
+			w.provisioningErrorMap[request.InstanceId] = err
+			return
 		}
+
 		lsession.Info("db-route-saved")
 
 		var domains []string
@@ -673,13 +683,18 @@ func (w *WorkerManager) provision(request ProvisionRequest) {
 			domains = append(domains, request.DomainOpts.Domains[i].Value)
 		}
 
-		// request the certificate to be obtained
+		// submit the certificate request
 		w.globalQueueManagerChan <- ManagerRequest{
 			InstanceId: request.InstanceId,
 			Type:       ObtainmentManagerType,
-			Payload: certificate.ObtainRequest{
-				Domains: domains,
-				Bundle:  true,
+			Payload: ObtainRequest{
+				ObtainRequest: certificate.ObtainRequest{
+					Domains:    domains,
+					Bundle:     true,
+					MustStaple: false,
+				},
+				Context:    request.Context,
+				InstanceId: request.InstanceId,
 			},
 		}
 		return
@@ -842,27 +857,17 @@ func (w *WorkerManager) deprovision(request DeprovisionRequest) {
 
 	// get the certificate.
 	var localCert Certificate
-	result := w.settings.Db.Where("instance_id = ?", request.InstanceId).Find(&localCert)
-	if result.RecordNotFound() {
-		lsession.Error("certificate-not-found", result.Error)
-		request.Response <- DeprovisionResponse{Error: result.Error}
-		return
-	} else if result.Error != nil {
-		lsession.Error("generic-certificate-db-error", result.Error)
-		request.Response <- DeprovisionResponse{Error: result.Error}
+	if err := w.settings.Db.Model(&localCert).Where("instance_id = ?", request.InstanceId).First(); err != nil {
+		lsession.Error("generic-certificate-db-error", err)
+		request.Response <- DeprovisionResponse{Error: err}
 		return
 	}
 
 	// get the domain reference.
 	var localRoute DomainRouteModel
-	result = w.settings.Db.Where("instance_id = ?", request.InstanceId).Find(&localRoute)
-	if result.RecordNotFound() {
-		lsession.Error("route-not-found", result.Error)
-		request.Response <- DeprovisionResponse{Error: result.Error}
-		return
-	} else if result.Error != nil {
-		lsession.Error("generic-domain-route-db-error", result.Error)
-		request.Response <- DeprovisionResponse{Error: result.Error}
+	if err := w.settings.Db.Model(&localRoute).Where("instance_id = ?", request.InstanceId).First(); err != nil {
+		lsession.Error("generic-domain-route-db-error", err)
+		request.Response <- DeprovisionResponse{Error: err}
 		return
 	}
 
@@ -875,7 +880,7 @@ func (w *WorkerManager) deprovision(request DeprovisionRequest) {
 		},
 	}); err != nil {
 		w.logger.Error("elb-remove-listener-certificate-failed", err)
-		request.Response <- DeprovisionResponse{Error: result.Error}
+		request.Response <- DeprovisionResponse{Error: err}
 		return
 	}
 
@@ -947,88 +952,31 @@ func (w *WorkerManager) getInstanceRunner() {
 	}()
 }
 
-// This function just polls for the last operation so the workflow will continue to move state.
-func (w *WorkerManager) pollRunner() {
-
-	lsession := w.logger.Session("poll-runner")
-
-	tick := time.Millisecond * 3000
-	failTime := tick - 100
-
-	ticker := time.NewTicker(tick)
-	for ; true; <-ticker.C {
-
-		// todo (mxplusb): figure out how to implement canceling.
-		ctx := context.TODO()
-
-		var localDomainRoutes []StateModel
-		results := w.db.Where("current_state < ?", Provisioned).Find(&localDomainRoutes)
-		if results.RecordNotFound() {
-			continue
-		} else if results.Error != nil {
-			lsession.Error("error-finding-currently-provisioning-records", results.Error)
-			continue
-		}
-
-		respc := make(chan LastOperationResponse, len(localDomainRoutes))
-
-		for idx := range localDomainRoutes {
-			if localDomainRoutes[idx].ErrorMessage == "" {
-				w.globalQueueManagerChan <- ManagerRequest{
-					InstanceId: localDomainRoutes[idx].InstanceId,
-					Type:       WorkerManagerType,
-					Payload: LastOperationRequest{
-						Context:    ctx,
-						InstanceId: localDomainRoutes[idx].InstanceId,
-						Details:    domain.PollDetails{},
-						Response:   respc,
-					},
-				}
-			}
-		}
-
-		// sleep for a bit, then close.
-		time.Sleep(failTime)
-		close(respc)
-	}
-}
-
 func (w *WorkerManager) getInstance(request GetInstanceRequest) {
 	lsession := w.logger.Session("get-instance", lager.Data{
 		"instance-id": request.InstanceId,
 	})
 
 	var localDomainRoute DomainRouteModel
-	results := w.db.Where("instance_id = ?", request.InstanceId).Find(&localDomainRoute)
-	if results.Error != nil {
-		w.globalQueueManagerChan <- ManagerRequest{
-			InstanceId: request.InstanceId,
-			Type:       StateManagerType,
-			Payload: StateTransitionRequest{
-				InstanceId:   request.InstanceId,
-				CurrentState: Unknown,
-				DesiredState: Error,
-				ErrorMessage: results.Error.Error(),
-				Response:     nil,
-			},
-		}
+	if err := w.db.Model(&localDomainRoute).Where("instance_id = ?", request.InstanceId).First(); err != nil {
 		if request.Response != nil {
 			lresp := GetInstanceResponse{
 				InstanceId: request.InstanceId,
 				Route:      DomainRouteModel{},
-				Error:      results.Error,
+				Error:      err,
 			}
-			if results.RecordNotFound() {
-				lresp.ErrorNotFound = true
-			} else {
-				lresp.ErrorNotFound = false
-			}
+			// todo (mxplusb): add `notFound()` here.
+			//if results.RecordNotFound() {
+			//	lresp.ErrorNotFound = true
+			//} else {
+			//	lresp.ErrorNotFound = false
+			//}
 			request.Response <- lresp
 		}
-		lsession.Error("cannot-find-domain-route-reference", results.Error)
+		lsession.Error("cannot-find-domain-route-reference", err)
 		return
 	}
-	lsession.Info("found-service-instance")
+	lsession.Debug("found-service-instance")
 
 	request.Response <- GetInstanceResponse{
 		InstanceId:    request.InstanceId,
@@ -1311,7 +1259,7 @@ type DnsInstructionsRequest struct {
 }
 
 type DnsInstructionsResponse struct {
-	Messenger []DomainMessenger
+	Messenger []*DomainMessenger
 	Error     error
 }
 
@@ -1333,8 +1281,8 @@ func (w *WorkerManager) getDnsInstructions(msg DnsInstructionsRequest, resp chan
 		Error: nil,
 	}
 
-	var domainMessage []DomainMessenger
-	if err := w.settings.Db.Where("instance_id = ?", msg.InstanceId).Find(&domainMessage).Error; err != nil {
+	var domainMessage []*DomainMessenger
+	if err := w.settings.Db.Model(&domainMessage).Where("instance_id = ?", msg.InstanceId).First(); err != nil {
 		lsession.Error("db-find-dns-instructions", err)
 		localResp.Error = err
 		resp <- localResp

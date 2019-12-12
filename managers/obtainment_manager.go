@@ -1609,10 +1609,9 @@ func (o *ObtainmentManager) certificateReady(request CertificateReadyRequest) {
 				InstanceId:   request.InstanceId,
 				CurrentState: Finalized,
 				DesiredState: CertificateReady,
-				ErrorMessage: nil,
+				ErrorMessage: "",
 				Response:     nil,
 			},
 		}
 	}
-
 }

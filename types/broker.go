@@ -1,9 +1,5 @@
 package types
 
-import (
-	"github.com/jinzhu/gorm"
-)
-
 type CdnPlanOptions struct {
 	Domain         string   `json:"domain"`
 	Origin         string   `json:"origin"`
@@ -56,15 +52,5 @@ type RuntimeSettings struct {
 
 // Domain is an instance of a domain.
 type Domain struct {
-	gorm.Model
 	Value string
-}
-
-func NewSettings() (RuntimeSettings, error) {
-	var settings RuntimeSettings
-	return settings, nil
-}
-
-func Connect(settings RuntimeSettings) (*gorm.DB, error) {
-	return gorm.Open("postgres", settings.DatabaseUrl)
 }
