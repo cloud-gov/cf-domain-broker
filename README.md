@@ -77,6 +77,8 @@ verification.
 
 The Broker can be configured via the following environment variables:
 
+Variable                       | Meaning
+-------------------------------|------------------------------------------------------
 `AWS_ACCESS_KEY_ID`            | AWS access key
 `AWS_SECRET_ACCESS_KEY`        | AWS secret access key
 `AWS_DEFAULT_REGION`           | AWS region to use
