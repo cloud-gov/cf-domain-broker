@@ -84,7 +84,7 @@ Variable                       | Meaning
 `AWS_DEFAULT_REGION`           | AWS region to use
 `ACME_ROOT`                    | _todo (mxplusb):_ this needs to go in acceptance_tests
 `ACME_URL`                     | ACME server url, self-hosted, LE staging, or LE prod works.
-`ALB_NAMES`                    | The resource names of the ELBs/ALBs you want to use for brokering custom domains. format: `alb-0,alb-1,`
+`ALB_NAMES`                    | The resource names of the ELBs/ALBs you want to use for brokering custom domains. format: `alb-0,alb-1`
 `BROKER_NAME`                  | The name of the cf app which gets deployed.
 `BUCKET`                       | The S3 bucket which will be used for HTTP01 renewals.
 `DATABASE_URL`                 | The Postgres database URL.
