@@ -127,4 +127,4 @@ responsible for auditing your own security policies. No warranty, etc, etc.
 
 This broker leverages [Concourse](https://concourse-ci.org) for it's deployment
 automation, but it's not dependent on it.  You can find example and live
-concourse configuration files in the `ci/` directory.
+concourse configuration files in [the `ci/` directory](/ci).
