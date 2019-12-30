@@ -1,10 +1,10 @@
-# Manual Domain Creation
+# Manual CDN Creation
 
-In the event the broker is unavailable, custom domains can be created manually using the process below. The process requires coordination of a DNS entry as well as two DNS challenges. The overall process involves:
+In the event the broker is unavailable, custom domains with CDN (Cloud Front) can be created manually using the process below. The process requires coordination of a DNS entry as well as a DNS challenge. The overall process involves:
 
 1. **Generating Certificates**: *This requires real time coordination to set up DNS challenges. It can be done by ops or the customer.*
 1. **Importing Certs into ACM**
-1. **Creating the CloudFront Distribtuion**
+1. **Creating & Configuring the CloudFront Distribtuion**
 
 A script is included which automates this process (`create-distribution.sh`). The script uses certbot and terraform.
 
@@ -26,7 +26,7 @@ Be sure you have the terraform client installed (`brew upgrade terraform` is a g
 
 ### Run aws configure
 
-Be sure you run `aws configure` and provide credentials for AWS Commercial Production. Be sure to use `us-east-1` as the region as ACM support for terraform only works in `us-east-1`.
+Be sure you run `aws configure` and provide credentials for **AWS Commercial Production**. Be sure to use `us-east-1` as the region as ACM support for terraform only works in `us-east-1`.
 
 ### Setup a base directory
 
