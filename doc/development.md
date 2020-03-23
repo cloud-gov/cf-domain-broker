@@ -179,10 +179,5 @@ certificate to the CloudFront service.
 
 All of the complexity above (the virtual actor pattern, the constant management
 of state, and the re-implementation of `lego`) is to lessen the impact on users
-when we re-deploy or restart the broker.
+when we re-deploy or restart the broker.  See related discussion [in this issue](https://github.com/18F/cf-domain-broker/issues/5).
 
-It's worth discussing whether this is worth the complexity.  How many certs do
-we expect to be in the middle of obtainment at any given moment?  How much of
-an impact on the end user would it be to simply change the token and present
-new DNS instructions?  Could this be mitigated by documentation and/or
-hand-holding by the operations team?
